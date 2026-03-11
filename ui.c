@@ -1,27 +1,27 @@
 /*
- * ui.c — Clay rendering layer for Clay DB Viewer
+ * ui.c — Clay rendering layer for the Student Transcript Viewer
  *
  * NOT compiled independently. Included into main.c AFTER all globals
- * are declared, so every `g*` variable below is provided by main.c.
+ * and db.h/app_data.h are declared.
  *
  * Globals expected from main.c:
  *   int   gScreenW, gScreenH   — current window dimensions
- *   int   gActiveNav           — currently highlighted sidebar item
+ *   int   gActiveNav           — active subject-type section (0 = sizeSubjectType-1)
  *   char  gDynBuf[], gDynPos   — per-frame dynamic string arena
  *   bool  gPopupOpen           — command palette visibility
  *   char  gCmdBuf[], gCmdLen   — current typed text
  *   bool  gHasResult           — whether a toast should be shown
  *   float gResultShowUntil     — GetTime() deadline for the toast
- *   char  gFilterDept[]        — active department filter ("" = show all)
  *   char  gResultMsg[]         — result message shown in toast
+ *   Player gPlayer             — filled by DB_Query()
  */
 
 /* ─── Layout constants ───────────────────────────────────────────────── */
-#define SIDEBAR_W   240
-#define ROW_H        56
-#define HDR_H        50
+#define SIDEBAR_W   210
+#define ROW_H        44
+#define HDR_H        42
 
-/* ─── Colors (dark modern palette) ──────────────────────────────────── */
+/* ─── Colors ─────────────────────────────────────────────────────────── */
 #define C_BG         ((Clay_Color){ 11,  11,  20, 255})
 #define C_SIDEBAR    ((Clay_Color){ 15,  15,  28, 255})
 #define C_CARD       ((Clay_Color){ 20,  20,  38, 255})
@@ -45,24 +45,21 @@
 #define C_TRANS      ((Clay_Color){  0,   0,   0,   0})
 
 /* ─── Text config helper ─────────────────────────────────────────────── */
-#define FONT_SCALE 1.4f
+/* gFontScale is declared in main.c and loaded from assets/ui.cfg        */
 #define TC(color, size) \
     Clay__StoreTextElementConfig((Clay_TextElementConfig){ \
         .textColor = (color), \
-        .fontSize  = (uint16_t)((size) * FONT_SCALE), \
+        .fontSize  = (uint16_t)((size) * gFontScale), \
         .fontId    = 0, \
         .wrapMode  = CLAY_TEXT_WRAP_NONE })
 
 /* ─── String helpers ─────────────────────────────────────────────────── */
-
-/* Clay_String from a static/permanent char* */
 static Clay_String CS(const char *s)
 {
     return (Clay_String){ .isStaticallyAllocated = true,
                           .length = (int)strlen(s), .chars = s };
 }
 
-/* Clay_String from a printf-style format, backed by the per-frame gDynBuf */
 static Clay_String DS(const char *fmt, ...)
 {
     char   *start = gDynBuf + gDynPos;
@@ -72,9 +69,8 @@ static Clay_String DS(const char *fmt, ...)
     int len = vsnprintf(start, (size_t)(avail > 0 ? avail : 0), fmt, ap);
     va_end(ap);
     if (len < 0) len = 0;
-    if (len >= avail) {          /* wrap buffer on overflow */
-        gDynPos = 0;
-        start   = gDynBuf;
+    if (len >= avail) {
+        gDynPos = 0; start = gDynBuf;
         va_start(ap, fmt);
         len = vsnprintf(start, DYN_BUF_SIZE - 1, fmt, ap);
         va_end(ap);
@@ -89,7 +85,7 @@ static Clay_String DS(const char *fmt, ...)
  *  SIDEBAR
  * ═══════════════════════════════════════════════════════════════════════ */
 
-static void RenderNavItem(int idx, const char *label, const char *icon)
+static void RenderNavItem(int idx, const char *label)
 {
     bool active = (idx == gActiveNav);
     Clay_Color bg  = active ? C_ACCENT_BG : C_TRANS;
@@ -98,34 +94,31 @@ static void RenderNavItem(int idx, const char *label, const char *icon)
 
     CLAY(CLAY_IDI("NavItem", idx), {
         .layout = {
-            .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(44) },
+            .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(38) },
             .padding         = { 10, 10, 0, 0 },
-            .childGap        = 10,
+            .childGap        = 8,
             .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
             .layoutDirection = CLAY_LEFT_TO_RIGHT,
         },
-        /* show a subtle hover tint for inactive items */
         .backgroundColor = (!active && Clay_Hovered()) ? C_ROW_HOVER : bg,
-        .cornerRadius    = CLAY_CORNER_RADIUS(6),
+        .cornerRadius    = CLAY_CORNER_RADIUS(5),
         .border          = { .color = bdr, .width = { .left = active ? 3 : 0 } },
     }) {
-        /* ── click: update active nav ── */
-        if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+        if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
             gActiveNav = idx;
-        }
 
-        /* icon chip */
-        CLAY(CLAY_IDI("NavIcon", idx), {
+        /* index badge */
+        CLAY(CLAY_IDI("NavBdg", idx), {
             .layout = {
-                .sizing         = { CLAY_SIZING_FIXED(24), CLAY_SIZING_FIXED(24) },
+                .sizing         = { CLAY_SIZING_FIXED(20), CLAY_SIZING_FIXED(20) },
                 .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
             },
             .backgroundColor = active ? C_ACCENT_DIM : C_BORDER,
-            .cornerRadius    = CLAY_CORNER_RADIUS(5),
+            .cornerRadius    = CLAY_CORNER_RADIUS(4),
         }) {
-            CLAY_TEXT(CS(icon), TC(active ? C_WHITE : C_SUBTEXT, 11));
+            CLAY_TEXT(DS("%d", idx), TC(active ? C_WHITE : C_SUBTEXT, 9));
         }
-        CLAY_TEXT(CS(label), TC(tc, 13));
+        CLAY_TEXT(CS(label), TC(tc, 11));
     }
 }
 
@@ -134,38 +127,36 @@ static void RenderSidebar(void)
     CLAY(CLAY_ID("Sidebar"), {
         .layout = {
             .sizing          = { CLAY_SIZING_FIXED(SIDEBAR_W), CLAY_SIZING_GROW(0) },
-            .padding         = { 12, 12, 16, 16 },
-            .childGap        = 4,
+            .padding         = { 10, 10, 12, 12 },
+            .childGap        = 3,
             .layoutDirection = CLAY_TOP_TO_BOTTOM,
         },
         .backgroundColor = C_SIDEBAR,
         .border          = { .color = C_BORDER, .width = { .right = 1 } },
     }) {
-        /* ── Logo ── */
+        /* Logo */
         CLAY(CLAY_ID("Logo"), {
             .layout = {
-                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(58) },
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(54) },
                 .padding         = { 4, 4, 0, 0 },
-                .childGap        = 10,
+                .childGap        = 8,
                 .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
                 .layoutDirection = CLAY_LEFT_TO_RIGHT,
             },
         }) {
             CLAY(CLAY_ID("LogoBadge"), {
                 .layout = {
-                    .sizing         = { CLAY_SIZING_FIXED(34), CLAY_SIZING_FIXED(34) },
+                    .sizing         = { CLAY_SIZING_FIXED(30), CLAY_SIZING_FIXED(30) },
                     .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
                 },
                 .backgroundColor = C_ACCENT,
-                .cornerRadius    = CLAY_CORNER_RADIUS(8),
-            }) {
-                CLAY_TEXT(CLAY_STRING("DB"), TC(C_WHITE, 12));
-            }
+                .cornerRadius    = CLAY_CORNER_RADIUS(7),
+            }) { CLAY_TEXT(CLAY_STRING("TC"), TC(C_WHITE, 11)); }
             CLAY(CLAY_ID("LogoText"), {
                 .layout = { .layoutDirection = CLAY_TOP_TO_BOTTOM, .childGap = 2 },
             }) {
-                CLAY_TEXT(CLAY_STRING("Clay DB"), TC(C_TEXT,    15));
-                CLAY_TEXT(CLAY_STRING("v1.0"),    TC(C_SUBTEXT, 11));
+                CLAY_TEXT(CLAY_STRING("Transcript"),  TC(C_TEXT,    13));
+                CLAY_TEXT(CLAY_STRING("Viewer v1.0"), TC(C_SUBTEXT,  9));
             }
         }
 
@@ -175,21 +166,18 @@ static void RenderSidebar(void)
             .backgroundColor = C_BORDER,
         }) {}
 
-        /* section label */
-        CLAY(CLAY_ID("MenuLabel"), {
+        CLAY(CLAY_ID("SectionLabel"), {
             .layout = {
-                .sizing         = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(30) },
+                .sizing         = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(26) },
                 .padding        = { 4, 4, 0, 0 },
                 .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
             },
-        }) {
-            CLAY_TEXT(CLAY_STRING("MENU"), TC(C_SUBTEXT, 10));
-        }
+        }) { CLAY_TEXT(CLAY_STRING("SUBJECT TYPES"), TC(C_SUBTEXT, 9)); }
 
-        RenderNavItem(0, "Dashboard", "");
-        RenderNavItem(1, "Employees", "");
-        RenderNavItem(2, "Reports",   "");
-        RenderNavItem(3, "Analytics", "");
+        /* one nav item per subject type */
+        for (int i = 0; i < sizeSubjectType; i++) {
+            RenderNavItem(i, gTypeName[i]);
+        }
 
         /* spacer */
         CLAY(CLAY_ID("NavSpacer"), {
@@ -201,12 +189,10 @@ static void RenderSidebar(void)
             .backgroundColor = C_BORDER,
         }) {}
 
-        RenderNavItem(4, "Settings", "");
-
-        /* ── User card ── */
+        /* user card */
         CLAY(CLAY_ID("UserCard"), {
             .layout = {
-                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(54) },
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(50) },
                 .padding         = { 8, 8, 0, 0 },
                 .childGap        = 8,
                 .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
@@ -217,67 +203,82 @@ static void RenderSidebar(void)
         }) {
             CLAY(CLAY_ID("UAvatarCircle"), {
                 .layout = {
-                    .sizing         = { CLAY_SIZING_FIXED(32), CLAY_SIZING_FIXED(32) },
+                    .sizing         = { CLAY_SIZING_FIXED(30), CLAY_SIZING_FIXED(30) },
                     .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
                 },
                 .backgroundColor = C_ACCENT,
-                .cornerRadius    = CLAY_CORNER_RADIUS(16),
+                .cornerRadius    = CLAY_CORNER_RADIUS(15),
             }) {
-                CLAY_TEXT(CLAY_STRING("JD"), TC(C_WHITE, 11));
+                /* Build up-to-2-char initials from gUserName */
+                char initials[3] = { '?', '\0', '\0' };
+                if (gUserName[0]) {
+                    initials[0] = (char)(gUserName[0] >= 'a' && gUserName[0] <= 'z'
+                                        ? gUserName[0] - 32 : gUserName[0]);
+                    for (int _i = 1; gUserName[_i]; _i++) {
+                        if (gUserName[_i-1] == '_' || gUserName[_i-1] == '-' ||
+                                gUserName[_i-1] == ' ') {
+                            initials[1] = (char)(gUserName[_i] >= 'a' && gUserName[_i] <= 'z'
+                                                ? gUserName[_i] - 32 : gUserName[_i]);
+                            break;
+                        }
+                    }
+                    if (!initials[1] && gUserName[1])
+                        initials[1] = (char)(gUserName[1] >= 'a' && gUserName[1] <= 'z'
+                                            ? gUserName[1] - 32 : gUserName[1]);
+                }
+                CLAY_TEXT(DS("%s", initials), TC(C_WHITE, 10));
             }
             CLAY(CLAY_ID("UInfo"), {
                 .layout = { .layoutDirection = CLAY_TOP_TO_BOTTOM, .childGap = 2 },
             }) {
-                CLAY_TEXT(CLAY_STRING("John Doe"),      TC(C_TEXT,    12));
-                CLAY_TEXT(CLAY_STRING("Administrator"), TC(C_SUBTEXT, 10));
+                CLAY_TEXT(DS("%s", gUserName[0] ? gUserName : "--"), TC(C_TEXT,    11));
+                CLAY_TEXT(CLAY_STRING("Student"),                    TC(C_SUBTEXT,  9));
             }
         }
     }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- *  MAIN CONTENT
+ *  SUMMARY CARDS ROW  (Total credits passed / subject type stats)
  * ═══════════════════════════════════════════════════════════════════════ */
 
-static void RenderStatCard(int idx, const char *title, const char *value,
-                            const char *change, Clay_Color accent)
+static void RenderSummaryCard(int idx, const char *title,
+                               Clay_String val, Clay_Color accent)
 {
-    Clay_Color changeColor = C_SUBTEXT;
-    if (change && change[0] == '+') changeColor = C_GREEN;
-    else if (change && change[0] == '-') changeColor = C_RED;
-
-    CLAY(CLAY_IDI("StatCard", idx), {
+    CLAY(CLAY_IDI("SumCard", idx), {
         .layout = {
             .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
-            .padding         = { 16, 16, 14, 14 },
-            .childGap        = 8,
+            .padding         = { 14, 14, 10, 10 },
+            .childGap        = 6,
             .layoutDirection = CLAY_TOP_TO_BOTTOM,
         },
         .backgroundColor = C_CARD,
-        .cornerRadius    = CLAY_CORNER_RADIUS(8),
+        .cornerRadius    = CLAY_CORNER_RADIUS(7),
         .border          = { .color = C_BORDER,
                              .width = { .left=1,.right=1,.top=1,.bottom=1 } },
     }) {
-        /* accent bar + title row */
-        CLAY(CLAY_IDI("SCTitle", idx), {
+        CLAY(CLAY_IDI("SCBar", idx), {
             .layout = {
-                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
-                .childGap        = 8,
-                .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
-                .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                .sizing         = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .childGap       = 6,
+                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                .layoutDirection= CLAY_LEFT_TO_RIGHT,
             },
         }) {
-            CLAY(CLAY_IDI("SCBar", idx), {
-                .layout          = { .sizing = { CLAY_SIZING_FIXED(4), CLAY_SIZING_FIXED(16) } },
+            CLAY(CLAY_IDI("SCAccent", idx), {
+                .layout          = { .sizing = { CLAY_SIZING_FIXED(3), CLAY_SIZING_FIXED(14) } },
                 .backgroundColor = accent,
                 .cornerRadius    = CLAY_CORNER_RADIUS(2),
             }) {}
-            CLAY_TEXT(CS(title), TC(C_SUBTEXT, 12));
+            CLAY_TEXT(CS(title), TC(C_SUBTEXT, 10));
         }
-        CLAY_TEXT(CS(value),  TC(C_TEXT,    26));
-        CLAY_TEXT(CS(change), TC(changeColor, 11));
+        CLAY_TEXT(val, TC(C_TEXT, 22));
     }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  SUBJECT TABLE  (header + rows for one Subject_Type)
+ * ═══════════════════════════════════════════════════════════════════════ */
 
 static void RenderTableHeader(void)
 {
@@ -289,29 +290,40 @@ static void RenderTableHeader(void)
         .backgroundColor = C_TBL_HDR,
         .border          = { .color = C_BORDER, .width = { .bottom = 1 } },
     }) {
-#define HDR_CELL(cid, w, label)                                               \
-        CLAY(CLAY_ID(cid), {                                                  \
-            .layout = {                                                       \
-                .sizing         = { w, CLAY_SIZING_GROW(0) },                \
-                .padding        = { 12, 12, 0, 0 },                          \
-                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },              \
-            },                                                                \
-        }) {                                                                  \
-            CLAY_TEXT(CLAY_STRING(label), TC(C_SUBTEXT, 11));                \
-        }
+#define HDR_CELL(cid, w, lbl) \
+        CLAY(CLAY_ID(cid), { \
+            .layout = { \
+                .sizing         = { w, CLAY_SIZING_GROW(0) }, \
+                .padding        = { 10, 10, 0, 0 }, \
+                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER }, \
+            }, \
+        }) { CLAY_TEXT(CLAY_STRING(lbl), TC(C_SUBTEXT, 10)); }
 
-        HDR_CELL("HC0", CLAY_SIZING_FIXED(64),  "#")
-        HDR_CELL("HC1", CLAY_SIZING_GROW(0),    "EMPLOYEE")
-        HDR_CELL("HC2", CLAY_SIZING_FIXED(130), "DEPARTMENT")
-        HDR_CELL("HC3", CLAY_SIZING_FIXED(160), "ROLE")
-        HDR_CELL("HC4", CLAY_SIZING_FIXED(112), "SALARY")
-        HDR_CELL("HC5", CLAY_SIZING_FIXED(110), "STATUS")
-        HDR_CELL("HC6", CLAY_SIZING_FIXED(112), "HIRE DATE")
+        HDR_CELL("HC0", CLAY_SIZING_FIXED(56),  "#")
+        HDR_CELL("HC1", CLAY_SIZING_GROW(0),    "SUBJECT NAME")
+        HDR_CELL("HC2", CLAY_SIZING_FIXED(80),  "ID")
+        HDR_CELL("HC3", CLAY_SIZING_FIXED(60),  "SCORE")
+        HDR_CELL("HC4", CLAY_SIZING_FIXED(72),  "MIDTERM")
+        HDR_CELL("HC5", CLAY_SIZING_FIXED(72),  "FINAL")
+        HDR_CELL("HC6", CLAY_SIZING_FIXED(60),  "PASS")
+        HDR_CELL("HC7", CLAY_SIZING_FIXED(62),  "CREDITS")
+        HDR_CELL("HC8", CLAY_SIZING_FIXED(58),  "TERM")
 #undef HDR_CELL
     }
 }
 
-static void RenderTableRow(Employee *emp, int idx)
+/* Score letter → color */
+static Clay_Color score_color(const char *letter)
+{
+    if (!letter || letter[0] == 'X') return C_SUBTEXT;
+    if (letter[0] == 'F') return C_RED;
+    if (letter[0] == 'A') return C_GREEN;
+    if (letter[0] == 'B') return C_ACCENT;
+    if (letter[0] == 'C') return C_YELLOW;
+    return C_TEXT;  /* D+ or D */
+}
+
+static void RenderTableRow(Subject_Node *node, int idx)
 {
     bool isOdd = idx % 2 != 0;
 
@@ -327,133 +339,155 @@ static void RenderTableRow(Employee *emp, int idx)
         /* ── # ── */
         CLAY(CLAY_IDI("RC", idx * 10 + 0), {
             .layout = {
-                .sizing         = { CLAY_SIZING_FIXED(64), CLAY_SIZING_GROW(0) },
-                .padding        = { 12, 12, 0, 0 },
+                .sizing         = { CLAY_SIZING_FIXED(56), CLAY_SIZING_GROW(0) },
+                .padding        = { 10, 10, 0, 0 },
                 .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
             },
-        }) {
-            CLAY_TEXT(DS("%d", emp->id), TC(C_SUBTEXT, 12));
-        }
+        }) { CLAY_TEXT(DS("%d", idx + 1), TC(C_SUBTEXT, 11)); }
 
-        /* ── Name + avatar ── */
+        /* ── Subject Name ── */
         CLAY(CLAY_IDI("RC", idx * 10 + 1), {
             .layout = {
-                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
-                .padding         = { 10, 10, 0, 0 },
-                .childGap        = 8,
-                .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
-                .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                .sizing         = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+                .padding        = { 10, 2, 0, 0 },
+                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
             },
-        }) {
-            CLAY(CLAY_IDI("RowAv", idx), {
-                .layout = {
-                    .sizing         = { CLAY_SIZING_FIXED(28), CLAY_SIZING_FIXED(28) },
-                    .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
-                },
-                .backgroundColor = C_ACCENT_DIM,
-                .cornerRadius    = CLAY_CORNER_RADIUS(14),
-            }) {
-                CLAY_TEXT(CS(emp->initials), TC(C_WHITE, 10));
-            }
-            CLAY_TEXT(CS(emp->name), TC(C_TEXT, 13));
-        }
+        }) { CLAY_TEXT(CS(node->name), TC(C_TEXT, 11)); }
 
-        /* ── Department ── */
+        /* ── ID ── */
         CLAY(CLAY_IDI("RC", idx * 10 + 2), {
             .layout = {
-                .sizing         = { CLAY_SIZING_FIXED(130), CLAY_SIZING_GROW(0) },
-                .padding        = { 10, 10, 0, 0 },
+                .sizing         = { CLAY_SIZING_FIXED(80), CLAY_SIZING_GROW(0) },
+                .padding        = { 8, 8, 0, 0 },
                 .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
             },
-        }) {
-            CLAY_TEXT(CS(emp->department), TC(C_SUBTEXT, 12));
-        }
+        }) { CLAY_TEXT(CS(node->ID), TC(C_ACCENT, 11)); }
 
-        /* ── Role ── */
+        /* ── Score letter ── */
         CLAY(CLAY_IDI("RC", idx * 10 + 3), {
             .layout = {
-                .sizing         = { CLAY_SIZING_FIXED(160), CLAY_SIZING_GROW(0) },
-                .padding        = { 10, 10, 0, 0 },
+                .sizing         = { CLAY_SIZING_FIXED(60), CLAY_SIZING_GROW(0) },
+                .padding        = { 8, 8, 0, 0 },
                 .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
             },
         }) {
-            CLAY_TEXT(CS(emp->role), TC(C_TEXT, 12));
+            /* Reconstruct full grade string (bit1 = has '+' modifier) */
+            bool plus = (node->status_ever_been_study & 2) != 0;
+            char grade[4];
+            if (node->score_letter == 'X') {
+                grade[0] = 'X'; grade[1] = '\0';
+            } else if (plus) {
+                grade[0] = node->score_letter; grade[1] = '+'; grade[2] = '\0';
+            } else {
+                grade[0] = node->score_letter; grade[1] = '\0';
+            }
+            char tmp[4] = { node->score_letter, '\0', '\0', '\0' };
+            Clay_Color sc = score_color(tmp);
+            CLAY_TEXT(DS("%s", grade), TC(sc, 13));
         }
 
-        /* ── Salary ── */
+        /* ── Midterm ── */
         CLAY(CLAY_IDI("RC", idx * 10 + 4), {
             .layout = {
-                .sizing         = { CLAY_SIZING_FIXED(112), CLAY_SIZING_GROW(0) },
-                .padding        = { 10, 10, 0, 0 },
+                .sizing         = { CLAY_SIZING_FIXED(72), CLAY_SIZING_GROW(0) },
+                .padding        = { 8, 8, 0, 0 },
                 .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
             },
         }) {
-            int k = emp->salary / 1000;
-            int r = (emp->salary % 1000) / 100;
-            Clay_String salStr = (r > 0) ? DS("$%d.%dK", k, r) : DS("$%dK", k);
-            CLAY_TEXT(salStr, TC(C_TEXT, 13));
+            Clay_String ms = (node->score_number_mid > 0.001f)
+                             ? DS("%.2f", node->score_number_mid)
+                             : CLAY_STRING("--");
+            CLAY_TEXT(ms, TC(C_TEXT, 11));
         }
 
-        /* ── Status badge ── */
+        /* ── Final ── */
         CLAY(CLAY_IDI("RC", idx * 10 + 5), {
             .layout = {
-                .sizing         = { CLAY_SIZING_FIXED(110), CLAY_SIZING_GROW(0) },
-                .padding        = { 10, 10, 0, 0 },
+                .sizing         = { CLAY_SIZING_FIXED(72), CLAY_SIZING_GROW(0) },
+                .padding        = { 8, 8, 0, 0 },
                 .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
             },
         }) {
-            Clay_Color badgeFg, badgeBg;
-            const char *badgeLabel;
-            switch (emp->status) {
-                case 1:  badgeFg = C_RED;    badgeBg = C_RED_BG;
-                         badgeLabel = "Inactive"; break;
-                case 2:  badgeFg = C_YELLOW; badgeBg = C_YELLOW_BG;
-                         badgeLabel = "On Leave"; break;
-                default: badgeFg = C_GREEN;  badgeBg = C_GREEN_BG;
-                         badgeLabel = "Active";
-            }
-            CLAY(CLAY_IDI("RowBdg", idx), {
+            Clay_String fs = (node->score_number_final > 0.001f)
+                             ? DS("%.2f", node->score_number_final)
+                             : CLAY_STRING("--");
+            CLAY_TEXT(fs, TC(C_TEXT, 11));
+        }
+
+        /* ── Pass badge ── */
+        CLAY(CLAY_IDI("RC", idx * 10 + 6), {
+            .layout = {
+                .sizing         = { CLAY_SIZING_FIXED(60), CLAY_SIZING_GROW(0) },
+                .padding        = { 8, 8, 0, 0 },
+                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+            },
+        }) {
+            bool    pass_flag = node->status_pass == 1;
+            bool    no_score  = (node->score_letter == 'X');
+            Clay_Color fg = no_score ? C_SUBTEXT : (pass_flag ? C_GREEN : C_RED);
+            Clay_Color bg = no_score ? C_TRANS   : (pass_flag ? C_GREEN_BG : C_RED_BG);
+            CLAY(CLAY_IDI("PassBdg", idx), {
                 .layout = {
-                    .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(22) },
-                    .padding        = { 10, 10, 4, 4 },
-                    .childAlignment = { .x = CLAY_ALIGN_X_CENTER,
-                                        .y = CLAY_ALIGN_Y_CENTER },
+                    .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(20) },
+                    .padding        = { 8, 8, 2, 2 },
+                    .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
                 },
-                .backgroundColor = badgeBg,
-                .cornerRadius    = CLAY_CORNER_RADIUS(11),
+                .backgroundColor = bg,
+                .cornerRadius    = CLAY_CORNER_RADIUS(10),
             }) {
-                CLAY_TEXT(CS(badgeLabel), TC(badgeFg, 11));
+                CLAY_TEXT(no_score ? CLAY_STRING("--")
+                                   : (pass_flag ? CLAY_STRING("YES") : CLAY_STRING("NO")),
+                          TC(fg, 10));
             }
         }
 
-        /* ── Hire date ── */
-        CLAY(CLAY_IDI("RC", idx * 10 + 6), {
+        /* ── Credits ── */
+        CLAY(CLAY_IDI("RC", idx * 10 + 7), {
             .layout = {
-                .sizing         = { CLAY_SIZING_FIXED(112), CLAY_SIZING_GROW(0) },
-                .padding        = { 10, 10, 0, 0 },
+                .sizing         = { CLAY_SIZING_FIXED(62), CLAY_SIZING_GROW(0) },
+                .padding        = { 8, 8, 0, 0 },
+                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+            },
+        }) { CLAY_TEXT(DS("%u", node->credit), TC(C_TEXT, 11)); }
+
+        /* ── Term ── */
+        CLAY(CLAY_IDI("RC", idx * 10 + 8), {
+            .layout = {
+                .sizing         = { CLAY_SIZING_FIXED(58), CLAY_SIZING_GROW(0) },
+                .padding        = { 8, 8, 0, 0 },
                 .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
             },
         }) {
-            CLAY_TEXT(CS(emp->hireDate), TC(C_SUBTEXT, 12));
+            unsigned int t = node->term_recomment_to_studie;
+            CLAY_TEXT(t > 0 ? DS("%u", t) : CLAY_STRING("--"),
+                      TC(C_SUBTEXT, 11));
         }
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+ *  MAIN CONTENT
+ * ═══════════════════════════════════════════════════════════════════════ */
+
 static void RenderMainContent(void)
 {
+    Subject_Type *st = &gPlayer.numofSubjectType[gActiveNav];
+
     CLAY(CLAY_ID("Main"), {
         .layout = {
             .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
-            .padding         = { 24, 24, 24, 24 },
-            .childGap        = 20,
+            .padding         = { 20, 20, 18, 18 },
+            .childGap        = 16,
             .layoutDirection = CLAY_TOP_TO_BOTTOM,
         },
         .backgroundColor = C_BG,
     }) {
+
         /* ── Page header ── */
         CLAY(CLAY_ID("PageHdr"), {
             .layout = {
                 .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .childGap        = 12,
                 .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
                 .layoutDirection = CLAY_LEFT_TO_RIGHT,
             },
@@ -465,23 +499,20 @@ static void RenderMainContent(void)
                     .childGap        = 4,
                 },
             }) {
-                CLAY_TEXT(CLAY_STRING("Employees"), TC(C_TEXT, 22));
-                /* subtitle: show filter status when active */
-                int hdrMatch = 0;
-                if (gFilterDept[0] != '\0') {
-                    for (int _i = 0; _i < EMP_COUNT; _i++)
-                        if (strcmp(gEmployees[_i].department, gFilterDept) == 0) hdrMatch++;
-                    CLAY_TEXT(DS("Filtered: %d of %d  (dept: %s)",
-                                 hdrMatch, EMP_COUNT, gFilterDept),
-                              TC(C_ACCENT, 12));
-                } else {
-                    CLAY_TEXT(DS("%d records in database", EMP_COUNT), TC(C_SUBTEXT, 13));
-                }
+                CLAY_TEXT(CS(gTypeName[gActiveNav]), TC(C_TEXT, 20));
+                CLAY_TEXT(
+                    DS("Player: %s   |   %d subjects  |  passed %d/%d credits",
+                       gUserName,
+                       st->Total_Subject,
+                       st->count_passCredit,
+                       st->Total_Credit),
+                    TC(C_SUBTEXT, 11));
             }
 
-            CLAY(CLAY_ID("SearchBox"), {
+            /* Ctrl+K hint pill */
+            CLAY(CLAY_ID("CmdHint"), {
                 .layout = {
-                    .sizing         = { CLAY_SIZING_FIXED(200), CLAY_SIZING_FIXED(36) },
+                    .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(30) },
                     .padding        = { 12, 12, 0, 0 },
                     .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
                 },
@@ -490,56 +521,51 @@ static void RenderMainContent(void)
                 .border          = { .color = C_BORDER,
                                      .width = { .left=1,.right=1,.top=1,.bottom=1 } },
             }) {
-                CLAY_TEXT(CLAY_STRING("Search..."), TC(C_SUBTEXT, 13));
-            }
-
-            CLAY(CLAY_ID("BtnGap1"), {
-                .layout = { .sizing = { CLAY_SIZING_FIXED(8), CLAY_SIZING_FIXED(1) } },
-            }) {}
-
-            CLAY(CLAY_ID("FilterBtn"), {
-                .layout = {
-                    .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(36) },
-                    .padding        = { 14, 14, 0, 0 },
-                    .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
-                },
-                .backgroundColor = C_CARD,
-                .cornerRadius    = CLAY_CORNER_RADIUS(6),
-                .border          = { .color = C_BORDER,
-                                     .width = { .left=1,.right=1,.top=1,.bottom=1 } },
-            }) {
-                CLAY_TEXT(CLAY_STRING("Filter"), TC(C_TEXT, 13));
-            }
-
-            CLAY(CLAY_ID("BtnGap2"), {
-                .layout = { .sizing = { CLAY_SIZING_FIXED(8), CLAY_SIZING_FIXED(1) } },
-            }) {}
-
-            CLAY(CLAY_ID("AddBtn"), {
-                .layout = {
-                    .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(36) },
-                    .padding        = { 16, 16, 0, 0 },
-                    .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
-                },
-                .backgroundColor = C_ACCENT,
-                .cornerRadius    = CLAY_CORNER_RADIUS(6),
-            }) {
-                CLAY_TEXT(CLAY_STRING("+ Add Employee"), TC(C_WHITE, 13));
+                CLAY_TEXT(CLAY_STRING("Ctrl+K  Command"), TC(C_SUBTEXT, 11));
             }
         }
 
-        /* ── Stats row ── */
-        CLAY(CLAY_ID("StatsRow"), {
+        /* ── Summary cards ── */
+        CLAY(CLAY_ID("SumRow"), {
             .layout = {
-                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(120) },
-                .childGap        = 16,
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(88) },
+                .childGap        = 12,
                 .layoutDirection = CLAY_LEFT_TO_RIGHT,
             },
         }) {
-            RenderStatCard(0, "Total Employees", "248", "+12 this month",    C_ACCENT);
-            RenderStatCard(1, "Active",          "203", "81.9% of total",    C_GREEN);
-            RenderStatCard(2, "On Leave",         "31", "12.5% of total",    C_YELLOW);
-            RenderStatCard(3, "New This Month",   "12", "+8 from last month", C_ACCENT);
+            /* global stats */
+            RenderSummaryCard(0, "Total Credits Passed",
+                DS("%d", gPlayer.ToTal_credit_pass), C_GREEN);
+
+            RenderSummaryCard(1, "Credits Not Passed",
+                DS("%d", gPlayer.ToTal_credit_npass), C_RED);
+
+            /* current section stats */
+            RenderSummaryCard(2, "Subjects (passed/total)",
+                DS("%d / %d", st->count_passSubject, st->Total_Subject), C_ACCENT);
+
+            RenderSummaryCard(3, "Credits (passed/total)",
+                DS("%d / %d", st->count_passCredit, st->Total_Credit), C_YELLOW);
+
+            /* graduation badge */
+            CLAY(CLAY_ID("GradCard"), {
+                .layout = {
+                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+                    .padding         = { 14, 14, 10, 10 },
+                    .childGap        = 6,
+                    .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                },
+                .backgroundColor = gPlayer.status_can_grauate ? C_GREEN_BG : C_RED_BG,
+                .cornerRadius    = CLAY_CORNER_RADIUS(7),
+                .border          = { .color = gPlayer.status_can_grauate ? C_GREEN : C_RED,
+                                     .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+            }) {
+                CLAY_TEXT(CLAY_STRING("Can Graduate"),
+                    TC(C_SUBTEXT, 10));
+                CLAY_TEXT(gPlayer.status_can_grauate
+                            ? CLAY_STRING("YES") : CLAY_STRING("NO"),
+                    TC(gPlayer.status_can_grauate ? C_GREEN : C_RED, 22));
+            }
         }
 
         /* ── Table card ── */
@@ -555,73 +581,190 @@ static void RenderMainContent(void)
         }) {
             RenderTableHeader();
 
+            /* scrollable body */
             CLAY(CLAY_ID("TblBody"), {
                 .layout = {
                     .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
                     .layoutDirection = CLAY_TOP_TO_BOTTOM,
                 },
-                .clip = { .vertical = true },
+                .clip = { .vertical = true, .childOffset = Clay_GetScrollOffset() },
             }) {
-                /* only render rows that match the active department filter */
-                bool filtering = gFilterDept[0] != '\0';
-                for (int i = 0; i < EMP_COUNT; i++) {
-                    if (filtering &&
-                        strcmp(gEmployees[i].department, gFilterDept) != 0)
-                        continue;
-                    RenderTableRow(&gEmployees[i], i);
+                Subject_Node *node = st->head;
+                int i = 0;
+                while (node) {
+                    RenderTableRow(node, i++);
+                    node = node->next;
+                }
+                if (i == 0) {
+                    /* empty placeholder */
+                    CLAY(CLAY_ID("EmptyRow"), {
+                        .layout = {
+                            .sizing         = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(64) },
+                            .childAlignment = { .x = CLAY_ALIGN_X_CENTER,
+                                                .y = CLAY_ALIGN_Y_CENTER },
+                        },
+                    }) {
+                        CLAY_TEXT(CLAY_STRING("No subjects in this category."),
+                                  TC(C_SUBTEXT, 12));
+                    }
                 }
             }
 
-            /* ── Pagination footer ── */
-            CLAY(CLAY_ID("Pagination"), {
+            /* Footer */
+            CLAY(CLAY_ID("TblFoot"), {
                 .layout = {
-                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(48) },
-                    .padding         = { 16, 16, 0, 0 },
-                    .childGap        = 6,
+                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(40) },
+                    .padding         = { 14, 14, 0, 0 },
+                    .childGap        = 8,
                     .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
                     .layoutDirection = CLAY_LEFT_TO_RIGHT,
                 },
                 .backgroundColor = C_TBL_HDR,
                 .border          = { .color = C_BORDER, .width = { .top = 1 } },
             }) {
-                /* pagination label: adapts to active filter */
-                if (gFilterDept[0] != '\0') {
-                    int mc = 0;
-                    for (int _i = 0; _i < EMP_COUNT; _i++)
-                        if (strcmp(gEmployees[_i].department, gFilterDept) == 0) mc++;
-                    CLAY_TEXT(DS("Showing %d match%s for '%s'  (cmd: clear to reset)",
-                                 mc, mc == 1 ? "" : "es", gFilterDept),
-                              TC(C_ACCENT, 12));
-                } else {
-                    CLAY_TEXT(DS("Showing 1\xe2\x80\x93%d of %d employees", EMP_COUNT, EMP_COUNT),
-                              TC(C_SUBTEXT, 12));
-                }
+                CLAY_TEXT(
+                    DS("Showing %d subjects  |  %d passed  |  %d/%d credits",
+                       st->Total_Subject,
+                       st->count_passSubject,
+                       st->count_passCredit,
+                       st->Total_Credit),
+                    TC(C_SUBTEXT, 10));
 
-                CLAY(CLAY_ID("PgSpacer"), {
+                CLAY(CLAY_ID("FtSpacer"), {
                     .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(1) } },
                 }) {}
 
-                const char *pages[] = {"<", "1", "2", "3", ">"};
-                for (int p = 0; p < 5; p++) {
-                    bool isNum = (p >= 1 && p <= 3);
-                    bool isOne = (p == 1);
-                    CLAY(CLAY_IDI("PgBtn", p), {
-                        .layout = {
-                            .sizing         = { CLAY_SIZING_FIXED(30), CLAY_SIZING_FIXED(30) },
-                            .childAlignment = { .x = CLAY_ALIGN_X_CENTER,
-                                                .y = CLAY_ALIGN_Y_CENTER },
-                        },
-                        .backgroundColor = isOne ? C_ACCENT : C_CARD,
-                        .cornerRadius    = CLAY_CORNER_RADIUS(6),
-                        .border          = { .color = isOne ? C_ACCENT : C_BORDER,
-                                             .width = { .left=1,.right=1,.top=1,.bottom=1 } },
-                    }) {
-                        Clay_Color pgTc = isOne ? C_WHITE
-                                        : isNum ? C_TEXT : C_SUBTEXT;
-                        CLAY_TEXT(CS(pages[p]), TC(pgTc, 13));
-                    }
-                }
+                CLAY_TEXT(
+                    DS("Total passed credits: %d", gPlayer.ToTal_credit_pass),
+                    TC(C_ACCENT, 10));
             }
+        }
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  NAME INPUT SCREEN  (shown on startup before DB is opened)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+static void RenderNameInput(void)
+{
+    /* full-screen background */
+    CLAY(CLAY_ID("NIBackdrop"), {
+        .layout = {
+            .sizing = { CLAY_SIZING_FIXED((float)gScreenW),
+                        CLAY_SIZING_FIXED((float)gScreenH) },
+        },
+        .backgroundColor = C_BG,
+        .floating = {
+            .attachTo = CLAY_ATTACH_TO_ROOT,
+            .zIndex   = 20,
+        },
+    }) {}
+
+    /* centered card */
+    CLAY(CLAY_ID("NICard"), {
+        .layout = {
+            .sizing          = { CLAY_SIZING_FIXED(480), CLAY_SIZING_FIT(0) },
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            .childGap        = 0,
+        },
+        .backgroundColor = C_CARD,
+        .cornerRadius    = CLAY_CORNER_RADIUS(12),
+        .border          = { .color = C_ACCENT,
+                             .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+        .floating = {
+            .attachTo     = CLAY_ATTACH_TO_ROOT,
+            .attachPoints = { .element = CLAY_ATTACH_POINT_CENTER_CENTER,
+                              .parent  = CLAY_ATTACH_POINT_CENTER_CENTER },
+            .zIndex       = 25,
+        },
+    }) {
+        /* header */
+        CLAY(CLAY_ID("NIHdr"), {
+            .layout = {
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(66) },
+                .padding         = { 22, 22, 0, 0 },
+                .childGap        = 4,
+                .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            },
+            .backgroundColor = C_TBL_HDR,
+            .border          = { .color = C_BORDER, .width = { .bottom = 1 } },
+        }) {
+            CLAY_TEXT(CLAY_STRING("Transcript Viewer"), TC(C_TEXT, 15));
+            CLAY_TEXT(CLAY_STRING("Enter your username to continue"),
+                      TC(C_SUBTEXT, 10));
+        }
+
+        /* label + input box */
+        CLAY(CLAY_ID("NIInputArea"), {
+            .layout = {
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .padding         = { 22, 22, 14, 14 },
+                .childGap        = 8,
+                .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            },
+        }) {
+            CLAY_TEXT(CLAY_STRING("Username  (max 25 chars)"), TC(C_SUBTEXT, 10));
+            CLAY(CLAY_ID("NIBox"), {
+                .layout = {
+                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(40) },
+                    .padding         = { 12, 12, 0, 0 },
+                    .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                    .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                },
+                .backgroundColor = C_ACCENT_BG,
+                .cornerRadius    = CLAY_CORNER_RADIUS(6),
+                .border          = { .color = C_ACCENT,
+                                     .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+            }) {
+                bool cursorOn = ((int)(GetTime() * 2) % 2) == 0;
+                if (gNameLen > 0)
+                    CLAY_TEXT(cursorOn ? DS("%s|", gUserName) : DS("%s ", gUserName),
+                              TC(C_TEXT, 13));
+                else
+                    CLAY_TEXT(cursorOn ? CLAY_STRING("|") : CLAY_STRING(" "),
+                              TC(C_SUBTEXT, 13));
+            }
+        }
+
+        /* status line */
+        CLAY(CLAY_ID("NIStatus"), {
+            .layout = {
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(34) },
+                .padding         = { 22, 22, 0, 0 },
+                .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                .layoutDirection = CLAY_LEFT_TO_RIGHT,
+            },
+            .border = { .color = C_BORDER, .width = { .top = 1 } },
+        }) {
+            if (gNameLen > 0) {
+                if (DB_Exists(gUserName))
+                    CLAY_TEXT(DS("db_%s.db  found — load existing data", gUserName),
+                              TC(C_GREEN, 10));
+                else
+                    CLAY_TEXT(DS("db_%s.db  will be created", gUserName),
+                              TC(C_ACCENT, 10));
+            } else {
+                CLAY_TEXT(CLAY_STRING("Type your username and press Enter"),
+                          TC(C_SUBTEXT, 10));
+            }
+        }
+
+        /* footer */
+        CLAY(CLAY_ID("NIFooter"), {
+            .layout = {
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(36) },
+                .padding         = { 22, 22, 0, 0 },
+                .childGap        = 24,
+                .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                .layoutDirection = CLAY_LEFT_TO_RIGHT,
+            },
+            .backgroundColor = C_TBL_HDR,
+            .border          = { .color = C_BORDER, .width = { .top = 1 } },
+        }) {
+            CLAY_TEXT(CLAY_STRING("Enter  Confirm"), TC(C_SUBTEXT, 10));
+            CLAY_TEXT(CLAY_STRING("ESC  Quit"),      TC(C_SUBTEXT, 10));
         }
     }
 }
@@ -632,11 +775,7 @@ static void RenderMainContent(void)
 
 static void RenderCommandPopup(void)
 {
-    /*
-     * Backdrop: full-screen dim.  Floating elements do not size with GROW
-     * when attached to root — use FIXED with current screen dimensions
-     * (gScreenW / gScreenH updated each frame in main loop).
-     */
+    /* full-screen backdrop */
     CLAY(CLAY_ID("PopupBackdrop"), {
         .layout = {
             .sizing = { CLAY_SIZING_FIXED((float)gScreenW),
@@ -649,7 +788,7 @@ static void RenderCommandPopup(void)
         },
     }) {}
 
-    /* ── Popup card — centred ── */
+    /* popup card */
     CLAY(CLAY_ID("PopupCard"), {
         .layout = {
             .sizing          = { CLAY_SIZING_FIXED(580), CLAY_SIZING_FIT(0) },
@@ -667,7 +806,7 @@ static void RenderCommandPopup(void)
             .zIndex       = 10,
         },
     }) {
-        /* ── Header bar ── */
+        /* header */
         CLAY(CLAY_ID("PUHdr"), {
             .layout = {
                 .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(44) },
@@ -686,10 +825,8 @@ static void RenderCommandPopup(void)
                 },
                 .backgroundColor = C_ACCENT,
                 .cornerRadius    = CLAY_CORNER_RADIUS(5),
-            }) {
-                CLAY_TEXT(CLAY_STRING("K"), TC(C_WHITE, 10));
-            }
-            CLAY_TEXT(CLAY_STRING("Command Palette"), TC(C_TEXT, 13));
+            }) { CLAY_TEXT(CLAY_STRING("K"), TC(C_WHITE, 10)); }
+            CLAY_TEXT(CLAY_STRING("Command Palette"), TC(C_TEXT, 12));
             CLAY(CLAY_ID("PUHdrSp"), {
                 .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(1) } },
             }) {}
@@ -701,54 +838,51 @@ static void RenderCommandPopup(void)
                 },
                 .backgroundColor = C_BORDER,
                 .cornerRadius    = CLAY_CORNER_RADIUS(4),
-            }) {
-                CLAY_TEXT(CLAY_STRING("Ctrl+K"), TC(C_SUBTEXT, 10));
-            }
+            }) { CLAY_TEXT(CLAY_STRING("Ctrl+K"), TC(C_SUBTEXT, 10)); }
         }
 
-        /* ── Input row ── */
+        /* input row */
         CLAY(CLAY_ID("PUInputRow"), {
             .layout = {
-                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(60) },
-                .padding         = { 18, 18, 0, 0 },
-                .childGap        = 12,
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(56) },
+                .padding         = { 16, 16, 0, 0 },
+                .childGap        = 10,
                 .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
                 .layoutDirection = CLAY_LEFT_TO_RIGHT,
             },
         }) {
-            CLAY_TEXT(CLAY_STRING(">"), TC(C_ACCENT, 18));
-
+            CLAY_TEXT(CLAY_STRING(">"), TC(C_ACCENT, 17));
             if (gCmdLen > 0) {
                 bool cursorOn = ((int)(GetTime() * 2) % 2) == 0;
                 CLAY_TEXT(cursorOn ? DS("%s|", gCmdBuf) : DS("%s ", gCmdBuf),
-                          TC(C_TEXT, 15));
+                          TC(C_TEXT, 14));
             } else {
-                CLAY_TEXT(CLAY_STRING("Type a command and press Enter..."),
-                          TC(C_SUBTEXT, 15));
+                CLAY_TEXT(CLAY_STRING("type <0-11>  |  score <CODE> <mid> <fin>  |  clear <CODE>  |  logout"),
+                          TC(C_SUBTEXT, 13));
             }
         }
 
-        /* ── Footer hints ── */
+        /* footer */
         CLAY(CLAY_ID("PUFooter"), {
             .layout = {
-                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(36) },
-                .padding         = { 18, 18, 0, 0 },
-                .childGap        = 24,
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(34) },
+                .padding         = { 16, 16, 0, 0 },
+                .childGap        = 20,
                 .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
                 .layoutDirection = CLAY_LEFT_TO_RIGHT,
             },
             .backgroundColor = C_TBL_HDR,
             .border          = { .color = C_BORDER, .width = { .top = 1 } },
         }) {
-            CLAY_TEXT(CLAY_STRING("Enter  Execute"),    TC(C_SUBTEXT, 11));
-            CLAY_TEXT(CLAY_STRING("Backspace  Delete"), TC(C_SUBTEXT, 11));
-            CLAY_TEXT(CLAY_STRING("ESC  Dismiss"),      TC(C_SUBTEXT, 11));
+            CLAY_TEXT(CLAY_STRING("Enter  Execute"),    TC(C_SUBTEXT, 10));
+            CLAY_TEXT(CLAY_STRING("Backspace  Delete"), TC(C_SUBTEXT, 10));
+            CLAY_TEXT(CLAY_STRING("ESC  Dismiss"),      TC(C_SUBTEXT, 10));
         }
     }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- *  RESULT TOAST  (top-centre, fades out)
+ *  RESULT TOAST
  * ═══════════════════════════════════════════════════════════════════════ */
 
 static void RenderResultToast(void)
@@ -756,7 +890,6 @@ static void RenderResultToast(void)
     float remaining = gResultShowUntil - (float)GetTime();
     if (remaining <= 0.f) return;
 
-    /* fade out over the last second */
     uint8_t alpha = (remaining < 1.f) ? (uint8_t)(remaining * 255.f) : 255;
 
     Clay_Color toastBg  = (Clay_Color){ 20,  20,  38, alpha };
@@ -765,8 +898,8 @@ static void RenderResultToast(void)
 
     CLAY(CLAY_ID("ResultToast"), {
         .layout = {
-            .sizing          = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(46) },
-            .padding         = { 20, 20, 0, 0 },
+            .sizing          = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(44) },
+            .padding         = { 18, 18, 0, 0 },
             .childGap        = 10,
             .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
             .layoutDirection = CLAY_LEFT_TO_RIGHT,
@@ -779,11 +912,11 @@ static void RenderResultToast(void)
             .attachTo     = CLAY_ATTACH_TO_ROOT,
             .attachPoints = { .element = CLAY_ATTACH_POINT_CENTER_TOP,
                               .parent  = CLAY_ATTACH_POINT_CENTER_TOP },
-            .offset       = { 0.f, 16.f },
+            .offset       = { 0.f, 14.f },
             .zIndex       = 8,
         },
     }) {
-        CLAY_TEXT(CLAY_STRING("->"),   TC(toastBdr, 13));
-        CLAY_TEXT(DS("%s", gResultMsg), TC(textClr,  14));
+        CLAY_TEXT(CLAY_STRING("->"),    TC(toastBdr, 12));
+        CLAY_TEXT(DS("%s", gResultMsg), TC(textClr,  13));
     }
 }

@@ -1,7 +1,7 @@
 CC      = gcc
 RAYLIB  = raylib-5.5_linux_amd64
 CFLAGS  = -O2 -Wall -Wno-missing-braces -I$(RAYLIB)/include
-LDFLAGS = $(RAYLIB)/lib/libraylib.a -lGL -lm -lpthread -ldl -lX11 -lXrandr -lXi -lXinerama -lXcursor
+LDFLAGS = $(RAYLIB)/lib/libraylib.a -lGL -lm -lpthread -ldl -lX11 -lXrandr -lXi -lXinerama -lXcursor -lsqlite3
 TARGET  = ./bin/program
 SRC     = main.c
 

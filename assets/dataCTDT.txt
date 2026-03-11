@@ -1,0 +1,118 @@
+////////////////////////////
+IT2000  Introduction to IT and Communications
+IT3011  Data Structures and Algorithms
+IT3030  Computer Architecture
+IT3040  Programming Techniques
+IT3070  Principles of Operating Systems
+IT3080  Computer Networks
+IT3090  Database Systems
+IT3100  Object-Oriented Programming
+IT3120  System Analysis and Design
+IT3150  Project I
+IT3160  Introduction to Artificial Intelligence
+IT3170  Applied Algorithms
+IT3180  Introduction to Software Engineering
+IT3190  Introduction to Machine Learning and Data Mining
+IT3930  Project II
+IT3940  Project III
+IT4015  Introduction to Information Security
+IT4244  IT Project Management
+IT4653  Deep Learning and Its Applications
+//////////////////////////////
+IT1108    Introduction to Programming
+IT3020    Discrete Mathematics
+MI1111    Calculus I
+MI1121    Calculus II
+MI1131    Calculus III
+MI1141    Algebra
+MI2020    Probability and Statistics
+MI3052    Introduction to Optimization Methods
+PH1110    General Physics I
+PH1120    General Physics II
+/////////////////////////////
+PE1014    Theoretical Physical Education and Sports
+PE1015    Freehand Gymnastics
+PE1024    Swimming
+PE2101    Volleyball 1
+PE2102    Volleyball 2
+PE2103    Volleyball 3
+PE2151    Aerobics
+PE2201    Football 1
+PE2202    Football 2
+PE2203    Football 3
+PE2251    Taekwondo 1
+PE2252    Taekwondo 2
+PE2253    Taekwondo 3
+PE2261    Karate
+PE2301    Basketball 1
+PE2302    Basketball 2
+PE2303    Basketball 3
+PE2401    Table Tennis 1
+PE2402    Table Tennis 2
+PE2403    Table Tennis 3
+PE2501    Badminton 1
+PE2502    Badminton 2
+PE2503    Badminton 3
+PE2601    Running
+PE2701    High Jump
+PE2801    Long Jump
+PE2901    Parallel Bars, Uneven Bars
+PE3101    Advanced Volleyball 1
+PE3102    Advanced Volleyball 2
+PE3103    Advanced Volleyball 3
+PE3104    Advanced Volleyball 4
+PE3105    Advanced Volleyball 5
+PE3201    Advanced Football 1
+PE3202    Advanced Football 2
+PE3203    Advanced Football 3
+PE3204    Advanced Football 4
+PE3205    Advanced Football 5
+PE3301    Advanced Basketball 1
+PE3302    Advanced Basketball 2
+PE3303    Advanced Basketball 3
+PE3304    Advanced Basketball 4
+PE3305    Advanced Basketball 5
+//////////////////////////
+EM1170    General Law
+SSH1111   Marxist-Leninist Philosophy
+SSH1121   Marxist-Leninist Political Economy
+SSH1131   Scientific Socialism
+SSH1141   History of the Communist Party of Vietnam
+SSH1151   Ho Chi Minh's Ideology
+//////////////////////////////
+CH2021    Innovation and Entrepreneurship
+ED3220    Soft Skills
+ED3280    Applied Psychology
+EM1010    General Management
+EM1180    Business Culture and Entrepreneurial Spirit
+ET3262    Technological Thinking and Engineering Design
+IT2030    Technical Writing and Presentation
+ME3123    Industrial Art Design
+ME3124    Product Promotion Design
+TEX3123   Industrial Art Design
+////////////////////////////////
+IT4991    Technical Internship
+////////////////////////////////
+IT4441    User Interface and User Experience
+IT4490    Software Design and Construction
+IT4501    Software Quality Assurance
+IT4785    Mobile Application Development
+///////////////////////////////
+IT4341    Decision Support Systems
+IT4350    Information Systems Architecture and Applications
+IT4611    Distributed Systems and Applications
+IT4863    Information Retrieval
+///////////////////////////
+IT4653    Deep Learning and Applications
+IT4906    Evolutionary Computing
+IT4930    Introduction to Data Science
+IT4931    Big Data Storage and Processing
+/////////////////////////////////
+IT4409    Web Technology and Online Services
+IT4788    Cross-Platform Application Development
+/////////////////////////////
+IT4613    Recommender Systems
+IT4663    Optimization and Planning
+//////////////////////////
+IT4995    Bachelor's Graduation Project
+///////////////////////////
