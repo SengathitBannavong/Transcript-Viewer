@@ -55,6 +55,17 @@ static int  gDynPos;
 static bool  gPopupOpen       = false;
 static char  gCmdBuf[256]     = {0};  /* text being typed            */
 static int   gCmdLen          = 0;
+
+/* row-edit popup state */
+static bool  gEditOpen        = false;
+static char  gEditCode[MAXSIZEID] = {0};  /* subject code being edited     */
+static char  gEditMidBuf[32]  = {0};
+static int   gEditMidLen      = 0;
+static char  gEditFinBuf[32]  = {0};
+static int   gEditFinLen      = 0;
+static int   gEditField       = 0;    /* 0 = mid, 1 = final            */
+static int   gEditRatio       = 3;    /* 1=50/50  2=40/60  3=30/70     */
+static char  gEditSubjectName[MAXSIZENAME] = {0};
 static bool  gHasResult       = false;
 static float gResultShowUntil = -1.f; /* GetTime() expiry for toast  */
 
@@ -64,6 +75,7 @@ static char  gResultMsg[256]  = {0};  /* message shown in toast                 
 
 /* UI scale (loaded from assets/ui.cfg) */
 static float gFontScale  = 1.8f;          /* multiplier for all font sizes         */
+static int   gTargetFPS  = 60;            /* target FPS (60–240, set in ui.cfg)    */
 
 /* name-input screen state */
 static bool  gNameInput  = true;      /* true = show name-input screen             */
@@ -144,6 +156,39 @@ static void HandleKeyboard(void)
         return;
     }
 
+    /* Edit popup takes input priority after F1 */
+    if (gEditOpen) {
+        if (IsKeyPressed(KEY_ESCAPE)) {
+            gEditOpen = false;
+            return;
+        }
+        /* Tab / Shift+Tab cycle between fields */
+        if (IsKeyPressed(KEY_TAB)) {
+            gEditField = (gEditField + 1) % 2;
+            return;
+        }
+        /* Backspace */
+        char *activeBuf = gEditField == 0 ? gEditMidBuf : gEditFinBuf;
+        int  *activeLen = gEditField == 0 ? &gEditMidLen : &gEditFinLen;
+        if ((IsKeyPressed(KEY_BACKSPACE) || IsKeyPressedRepeat(KEY_BACKSPACE))
+                && *activeLen > 0) {
+            activeBuf[--(*activeLen)] = '\0';
+        }
+        /* Printable: digits and single '.' */
+        int ch;
+        while ((ch = GetCharPressed()) != 0) {
+            bool isDot   = (ch == '.');
+            bool isDigit = (ch >= '0' && ch <= '9');
+            if ((isDigit || isDot) && *activeLen < 6) {
+                /* only one dot allowed */
+                if (isDot && strchr(activeBuf, '.')) continue;
+                activeBuf[(*activeLen)++] = (char)ch;
+                activeBuf[*activeLen]     = '\0';
+            }
+        }
+        return;
+    }
+
     /* Ctrl+K -- toggle palette */
     if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_K)) {
         gPopupOpen = !gPopupOpen;
@@ -151,6 +196,7 @@ static void HandleKeyboard(void)
         return;
     }
 
+    if (gPopupOpen && gEditOpen) gPopupOpen = false;
     if (!gPopupOpen) return;
 
     /* Escape -- dismiss */
@@ -200,7 +246,10 @@ static void BuildLayout(void)
     }) {
         if (!gNameInput) {
             RenderSidebar();
-            RenderMainContent();
+            if (gActiveNav == 0)
+                RenderDashboard();
+            else
+                RenderMainContent();
         }
     }
 
@@ -208,8 +257,9 @@ static void BuildLayout(void)
         RenderNameInput();
     } else {
         /* Floating overlays rendered on top via zIndex */
-        if (gPopupOpen) RenderCommandPopup();
-        if (gHasResult) RenderResultToast();
+        if (gEditOpen)   RenderEditPopup();
+        if (gPopupOpen)  RenderCommandPopup();
+        if (gHasResult)  RenderResultToast();
     }
 }
 
@@ -225,7 +275,7 @@ int main(void)
 {
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT);
     InitWindow(WIN_W, WIN_H, "Transcript Viewer");
-    SetTargetFPS(60);
+    SetTargetFPS(gTargetFPS);  /* will be updated after ui.cfg loads */
 
     /* Font loading: read paths from assets/fonts.cfg, fall back to Raylib default */
 #define MAX_FONT_ENTRIES 32
@@ -296,10 +346,17 @@ int main(void)
                 if (sscanf(line, "%63s %f", key, &val) == 2) {
                     if (strcmp(key, "font_scale") == 0 && val > 0.1f && val < 10.f)
                         gFontScale = val;
+                    if (strcmp(key, "target_fps") == 0) {
+                        int fps = (int)val;
+                        if (fps < 60)  fps = 60;
+                        if (fps > 240) fps = 240;
+                        gTargetFPS = fps;
+                    }
                 }
             }
             fclose(uiCfg);
         }
+        SetTargetFPS(gTargetFPS);  /* apply after ui.cfg parsed */
     }
 
     /* ── SQLite: opened via InitPlayerDB() after user enters name ───── */
@@ -344,6 +401,110 @@ int main(void)
         BeginDrawing();
         ClearBackground((Color){ 11, 11, 20, 255 });
         Clay_Raylib_Render(cmds, gFonts);
+
+        /* ── Draw donut charts on top of Clay output (dashboard only) ── */
+        if (gDBReady && !gNameInput && gActiveNav == 0) {
+            /* Fetch bounding boxes from last frame */
+            Clay_ElementData gd = Clay_GetElementData(
+                Clay_GetElementId(CLAY_STRING(DONUT_GRADE_ID)));
+            Clay_ElementData cd = Clay_GetElementData(
+                Clay_GetElementId(CLAY_STRING(DONUT_CPA_ID)));
+
+            /* ── Grade distribution donut ── */
+            if (gd.found) {
+                float cx = gd.boundingBox.x + gd.boundingBox.width  * 0.5f;
+                float cy = gd.boundingBox.y + gd.boundingBox.height * 0.5f;
+                float r  = (gd.boundingBox.width  < gd.boundingBox.height
+                            ? gd.boundingBox.width : gd.boundingBox.height) * 0.5f - 6.f;
+                if (r < 10.f) r = 10.f;
+                float inner = r * 0.58f;
+
+                /* count grades */
+                int cA=0,cB=0,cC=0,cD=0,cF=0,cX=0, tot=0;
+                for (int t=1; t<sizeSubjectType; t++) {
+                    Subject_Node *nd = gPlayer.numofSubjectType[t].head;
+                    while (nd) {
+                        if (nd->status_ever_been_study & 1) {
+                            switch(nd->score_letter){
+                                case 'A': cA++; break; case 'B': cB++; break;
+                                case 'C': cC++; break; case 'D': cD++; break;
+                                case 'F': cF++; break; default: cX++; break;
+                            }
+                            tot++;
+                        }  //else cX++;
+                        nd = nd->next;
+                    }
+                }
+                if (tot == 0) tot = 1;
+
+                typedef struct { int cnt; Color col; } Seg;
+                Seg segs[6] = {
+                    {cA, (Color){ 34,197, 94,255}},
+                    {cB, (Color){ 99,102,241,255}},
+                    {cC, (Color){234,179,  8,255}},
+                    {cD, (Color){249,115, 22,255}},
+                    {cF, (Color){239, 68, 68,255}},
+                    {cX, (Color){ 60, 60, 90,180}},
+                };
+                float angle = -90.f;
+                for (int s=0; s<6; s++) {
+                    if (segs[s].cnt == 0) continue;
+                    float sweep = 360.f * segs[s].cnt / (float)tot;
+                    DrawRing((Vector2){cx,cy}, inner, r, angle, angle+sweep, 36,
+                             segs[s].col);
+                    angle += sweep;
+                }
+                /* centre text */
+                char ctxt[16];
+                snprintf(ctxt, sizeof(ctxt), "%d", tot);
+                float tw = MeasureTextEx(gFonts[0], ctxt, 14.f, 1.f).x;
+                DrawTextEx(gFonts[0], ctxt,
+                           (Vector2){cx - tw*0.5f, cy - 10.f},
+                           12.f*gFontScale, 1.f, (Color){224,224,242,255});
+                DrawTextEx(gFonts[0], "subj",
+                           (Vector2){cx - MeasureTextEx(gFonts[0],"subj",10.f,1.f).x*0.5f,
+                                     cy + 2.f},
+                           12.f*gFontScale, 1.f, (Color){110,110,155,255});
+            }
+
+            /* ── CPA gauge (arc from -135° to 135°, 0..4 scale) ── */
+            if (cd.found) {
+                float cx = cd.boundingBox.x + cd.boundingBox.width  * 0.5f;
+                float cy = cd.boundingBox.y + cd.boundingBox.height * 0.5f;
+                float r  = (cd.boundingBox.width  < cd.boundingBox.height
+                            ? cd.boundingBox.width : cd.boundingBox.height) * 0.5f - 6.f;
+                if (r < 10.f) r = 10.f;
+                float inner = r * 0.58f;
+
+                float cpa_v = calc_cpa(&gPlayer, 0);
+                if (cpa_v > 4.f) cpa_v = 4.f;
+
+                /* background arc */
+                DrawRing((Vector2){cx,cy}, inner, r, -135.f, 135.f, 36,
+                         (Color){36,36,68,255});
+                /* filled arc */
+                float fillEnd = -135.f + 270.f * (cpa_v / 4.f);
+                Color fillCol = cpa_v >= 3.5f ? (Color){ 34,197, 94,255}
+                              : cpa_v >= 2.5f ? (Color){ 99,102,241,255}
+                              : cpa_v >= 2.0f ? (Color){234,179,  8,255}
+                                              : (Color){239, 68, 68,255};
+                if (cpa_v > 0.01f)
+                    DrawRing((Vector2){cx,cy}, inner, r, -135.f, fillEnd, 36,
+                             fillCol);
+                /* centre label */
+                char cpatxt[16];
+                snprintf(cpatxt, sizeof(cpatxt), "%.2f", cpa_v);
+                float tw2 = MeasureTextEx(gFonts[0], cpatxt, 16.f, 1.f).x;
+                DrawTextEx(gFonts[0], cpatxt,
+                           (Vector2){cx - tw2*0.5f, cy - 10.f},
+                           12.f*gFontScale, 1.f, fillCol);
+                DrawTextEx(gFonts[0], "/ 4.00",
+                           (Vector2){cx - MeasureTextEx(gFonts[0],"/ 4.00",10.f,1.f).x*0.5f,
+                                     cy + 8.f},
+                           12.f*gFontScale, 1.f, (Color){110,110,155,255});
+            }
+        }
+
         /* FPS counter */
         char fps[32];
         snprintf(fps, sizeof(fps), "FPS: %d", GetFPS());

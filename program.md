@@ -60,6 +60,20 @@ Open with **Ctrl + K**, then type a command and press **Enter**.
 | Scroll wheel | Scroll the subject table vertically |
 | Click a sidebar item | Switch to that subject-type section |
 | Hover over a row | Row highlights |
+| Click a row | Open the **Edit Score** popup for that subject |
+
+### Edit Score Popup
+
+| Key / Action | Effect |
+|--------------|--------|
+| Type digits or `.` | Enter a score value (max 6 characters per field) |
+| `Tab` | Switch focus between the Midterm and Final fields |
+| `Backspace` | Delete the last character in the active field |
+| `Escape` | Close the popup without saving |
+| Click a ratio button (`50/50`, `40/60`, `30/70`) | Select the midterm-to-final weight ratio |
+| **Save** button | Validate that both scores are in the 0–10 range, write to DB, refresh display, show result toast |
+| **Reset** button | Clear all scores for the subject, refresh display, show result toast |
+| **Cancel** button | Close the popup without saving |
 
 ---
 
