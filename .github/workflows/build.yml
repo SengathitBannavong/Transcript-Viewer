@@ -82,9 +82,11 @@ jobs:
           update: true
           install: >-
             mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-binutils
             make
             curl
             unzip
+            zip
 
       - name: Build
         run: make
