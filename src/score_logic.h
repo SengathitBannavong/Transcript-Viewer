@@ -38,6 +38,7 @@
  *  All other entries are set at runtime by init_grad_limits() to the sum of
  *  all credits for that type from subjects.dat (via Subject_Type.Total_Credit).
  * ──────────────────────────────────────────────────────────────────────── */
+
 /* Resolve effective limit for type i:
  *   GRAD_TOTAL_CREDIT        -> Total_Credit of that type (all credits in subjects.dat)
  *   GRAD_FIXED / GRAD_SUBJECT_COUNT -> gGradRules[i].limit_val
@@ -47,6 +48,15 @@ static int _sl_resolve_limit(Player *p, int i)
     if (gGradRules[i].mode == GRAD_TOTAL_CREDIT)
         return (int)p->numofSubjectType[i].Total_Credit;
     return gGradRules[i].limit_val;
+}
+/* Resolve effective pass for type i:
+ *   GRAD_SUBJECT_COUNT        -> count_passSubject it only count pass subject
+ *   GRAD_FIXED / GRAD_TOTAL_CREDIT -> count_passCredit get pass credit
+ */
+static int _sl_resolve_pass(Player *p, int i) {
+  if(gGradRules[i].mode == GRAD_SUBJECT_COUNT)
+      return (int)p->numofSubjectType[i].count_passSubject;
+  return (int)p->numofSubjectType[i].count_passCredit;
 }
 
 /* ── Score letter → 4-scale GPA point ───────────────────────────────────

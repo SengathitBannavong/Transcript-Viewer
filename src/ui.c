@@ -607,7 +607,7 @@ static void RenderMainContent(void)
             /* current section credits vs required limit */
             {
                 int sec_want = _sl_resolve_limit(&gPlayer, gActiveNav);
-                int sec_pass = (int)st->count_passCredit;
+                int sec_pass = _sl_resolve_pass(&gPlayer, gActiveNav);
                 RenderSummaryCard(5, "Section Credits (pass/want)",
                     DS("%d / %d", sec_pass, sec_want),
                     sec_pass >= sec_want ? C_GREEN : C_ACCENT);
@@ -1037,7 +1037,7 @@ static void RenderDashboard(void)
                         Subject_Type *st = &gPlayer.numofSubjectType[t];
                         if (gTypeName[t][0] == 0 || st->Total_Subject == 0) continue;
 
-                        int pass = (int)st->count_passCredit;
+                        int pass = _sl_resolve_pass(&gPlayer, t);
                         int tot  = st->Total_Credit > 0 ? st->Total_Credit : 1;
                         int lim  = _sl_resolve_limit(&gPlayer, t);
                         if (lim <= 0) lim = tot;
@@ -1267,7 +1267,7 @@ static void RenderEditPopup(void)
                 /* Midterm field */
                 CLAY(CLAY_ID("EditMidCol"), {
                     .layout = {
-                        .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                        .sizing          = { CLAY_SIZING_PERCENT(0.5f), CLAY_SIZING_FIT(0) },
                         .childGap        = 6,
                         .layoutDirection = CLAY_TOP_TO_BOTTOM,
                     },
@@ -1275,7 +1275,7 @@ static void RenderEditPopup(void)
                     CLAY_TEXT(CLAY_STRING("Midterm  (0 — 10)"), TC(C_SUBTEXT, 10));
                     CLAY(CLAY_ID("EditMidBox"), {
                         .layout = {
-                            .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(38) },
+                            .sizing          = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(38) },
                             .padding         = { 10, 10, 0, 0 },
                             .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
                             .layoutDirection = CLAY_LEFT_TO_RIGHT,
@@ -1289,11 +1289,11 @@ static void RenderEditPopup(void)
                         if (gEditMidLen > 0)
                             CLAY_TEXT(cursorOn && gEditField==0
                                         ? DS("%s|", gEditMidBuf)
-                                        : DS("%s",  gEditMidBuf),
+                                        : DS("%s ",  gEditMidBuf),
                                       TC(C_TEXT, 13));
                         else
                             CLAY_TEXT(gEditField==0 && cursorOn
-                                        ? CLAY_STRING("|") : CLAY_STRING("—"),
+                                        ? CLAY_STRING("|") : CLAY_STRING("-"),
                                       TC(C_SUBTEXT, 13));
                         /* click to focus */
                         if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
@@ -1304,7 +1304,7 @@ static void RenderEditPopup(void)
                 /* Final field */
                 CLAY(CLAY_ID("EditFinCol"), {
                     .layout = {
-                        .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                        .sizing          = { CLAY_SIZING_PERCENT(0.5f), CLAY_SIZING_FIT(0) },
                         .childGap        = 6,
                         .layoutDirection = CLAY_TOP_TO_BOTTOM,
                     },
@@ -1312,7 +1312,7 @@ static void RenderEditPopup(void)
                     CLAY_TEXT(CLAY_STRING("Final  (0 — 10)"), TC(C_SUBTEXT, 10));
                     CLAY(CLAY_ID("EditFinBox"), {
                         .layout = {
-                            .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(38) },
+                            .sizing          = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(38) },
                             .padding         = { 10, 10, 0, 0 },
                             .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
                             .layoutDirection = CLAY_LEFT_TO_RIGHT,
@@ -1326,11 +1326,11 @@ static void RenderEditPopup(void)
                         if (gEditFinLen > 0)
                             CLAY_TEXT(cursorOn && gEditField==1
                                         ? DS("%s|", gEditFinBuf)
-                                        : DS("%s",  gEditFinBuf),
+                                        : DS("%s ",  gEditFinBuf),
                                       TC(C_TEXT, 13));
                         else
                             CLAY_TEXT(gEditField==1 && cursorOn
-                                        ? CLAY_STRING("|") : CLAY_STRING("—"),
+                                        ? CLAY_STRING("|") : CLAY_STRING("-"),
                                       TC(C_SUBTEXT, 13));
                         /* click to focus */
                         if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
