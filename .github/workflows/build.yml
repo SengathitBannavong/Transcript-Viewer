@@ -4,6 +4,8 @@ on:
   push:
     branches: [main, master]
     tags: ['v*']
+  pull_request:
+    branches: [main, master]
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Linux build
@@ -102,61 +104,51 @@ jobs:
             -o Font/Space_Mono/static/SpaceMono-Bold.ttf
 
       - name: Collect required DLLs
-        shell: pwsh
         run: |
-          # ดึงรายชื่อ DLL ที่ program.exe ต้องการจริง ๆ
-          $exe     = "bin\program.exe"
-          $mingw   = "C:\msys64\mingw64\bin"
-          $dllDir  = "bin\dlls"
-          New-Item -ItemType Directory -Force -Path $dllDir | Out-Null
+          # รันบน msys2 shell — objdump พร้อมใช้งานทันที
+          mkdir -p bin/dlls
+          MINGW_BIN=/mingw64/bin
 
-          # ใช้ objdump เพื่อหา DLL dependencies
-          $needed = & "C:\msys64\mingw64\bin\objdump.exe" -p $exe |
-                    Select-String "DLL Name:" |
-                    ForEach-Object { ($_ -split "DLL Name:\s+")[1].Trim() }
+          echo "=== DLLs needed by program.exe ==="
+          objdump -p bin/program.exe | grep "DLL Name" | awk '{print $3}' | while read dll; do
+            echo "  $dll"
+            src="$MINGW_BIN/$dll"
+            if [ -f "$src" ]; then
+              cp "$src" bin/dlls/
+              echo "  Copied: $dll"
+            else
+              echo "  Skipped (system DLL): $dll"
+            fi
+          done
 
-          Write-Host "=== DLLs needed by program.exe ==="
-          $needed | ForEach-Object { Write-Host "  $_" }
-
-          foreach ($dll in $needed) {
-            $src = Join-Path $mingw $dll
-            if (Test-Path $src) {
-              Copy-Item $src $dllDir
-              Write-Host "Copied: $dll"
-            } else {
-              Write-Host "Skipped (system DLL): $dll"
-            }
-          }
-
-          Write-Host "=== Collected DLLs ==="
-          Get-ChildItem $dllDir | Select-Object Name
+          echo "=== Collected DLLs ==="
+          ls -la bin/dlls/
 
       - name: Package
-        shell: pwsh
         run: |
-          $pkg = "transcript-viewer-windows"
-          New-Item -ItemType Directory -Force -Path "dist/$pkg" | Out-Null
+          PKG=transcript-viewer-windows
+          mkdir -p dist/$PKG
 
           # Copy binary
-          Copy-Item "bin/program.exe"        "dist/$pkg/"
+          cp bin/program.exe     dist/$PKG/
 
           # Copy collected DLLs
-          if (Test-Path "bin/dlls") {
-            Copy-Item "bin/dlls/*.dll"       "dist/$pkg/"
-          }
+          if [ -d bin/dlls ] && [ "$(ls -A bin/dlls)" ]; then
+            cp bin/dlls/*.dll    dist/$PKG/
+          fi
 
           # Copy assets and extras
-          Copy-Item -Recurse "assets"        "dist/$pkg/"
-          Copy-Item -Recurse "Font"          "dist/$pkg/"
-          Copy-Item "README.md"              "dist/$pkg/"
-          Copy-Item "LICENSE.md"             "dist/$pkg/"
+          cp -r assets           dist/$PKG/
+          cp -r Font             dist/$PKG/
+          cp README.md           dist/$PKG/
+          cp LICENSE.md          dist/$PKG/
 
           # Zip
-          Compress-Archive -Path "dist/$pkg" -DestinationPath "$pkg.zip"
+          cd dist && zip -r ../$PKG.zip $PKG/
+          cd ..
 
-          Write-Host "=== Package contents ==="
-          Expand-Archive -Path "$pkg.zip" -DestinationPath "dist/verify" -Force
-          Get-ChildItem -Recurse "dist/verify" | Select-Object FullName
+          echo "=== Package contents ==="
+          unzip -l $PKG.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
