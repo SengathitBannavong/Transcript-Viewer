@@ -48,11 +48,11 @@ static void db_exec(const char *sql)
     }
 }
 
-/* Compute letter grade from 0.3*mid + 0.7*final */
-static const char *db_compute_letter(float mid, float final_)
+/* Compute letter grade with explicit mid/final weight ratio */
+static const char *db_compute_letter_r(float mid, float final_, float rm, float rf)
 {
     if (mid == 0.f && final_ == 0.f) return "X";
-    float g = 0.3f * mid + 0.7f * final_;
+    float g = rm * mid + rf * final_;
     if (g >= 9.0f) return "A+";
     if (g >= 8.5f) return "A";
     if (g >= 8.0f) return "B+";
@@ -384,45 +384,61 @@ void DB_Query(Player *player)
             st->count_passSubject++;
             st->count_passCredit+=(unsigned)credit;
             player->ToTal_credit_pass+=credit;
-        } else {
+        } else if (studied & 1) {
+            /* only count non-pass credits for subjects that were actually studied */
             player->ToTal_credit_npass+=credit;
         }
     }
     sqlite3_finalize(stmt);
-
-    player->status_can_grauate=(player->ToTal_credit_pass>=130)?1:0;
+    /* Note: status_can_grauate and status_alert are computed by
+       update_player_status() in score_logic.h — call it after DB_Query(). */
 }
 
 /* ─────────────────────────────────────────────────────────────────────
- * DB_UpdateScore
+ * DB_UpdateScoreRatio — update score with explicit mid/final weight ratio
+ *   ratio_sel: 1 = 50/50,  2 = 40/60,  3 (or default) = 30/70
  * ───────────────────────────────────────────────────────────────────── */
-int DB_UpdateScore(const char *code, float mid_, float final_)
+int DB_UpdateScoreRatio(const char *code, float mid_, float final_, int ratio_sel)
 {
-    if(!gDB||!code) return 0;
-    const char *letter=db_compute_letter(mid_,final_);
-    int pass=db_is_pass(letter);
-    int ever=(mid_>0||final_>0)?1:0;
+    if (!gDB || !code) return 0;
+    float rm, rf;
+    switch (ratio_sel) {
+        case 1:  rm = 0.5f; rf = 0.5f; break;  /* 50 / 50 */
+        case 2:  rm = 0.4f; rf = 0.6f; break;  /* 40 / 60 */
+        default: rm = 0.3f; rf = 0.7f; break;  /* 30 / 70 */
+    }
+    const char *letter = db_compute_letter_r(mid_, final_, rm, rf);
+    int pass = db_is_pass(letter);
+    int ever = (mid_ > 0 || final_ > 0) ? 1 : 0;
 
-    sqlite3_stmt *stmt=NULL;
+    sqlite3_stmt *stmt = NULL;
     sqlite3_prepare_v2(gDB,
         "UPDATE subject_scores SET score_letter=?,mid=?,final=?,pass=?,ever_studied=?"
         " WHERE subject_id=(SELECT id FROM subjects WHERE code=?);",
         -1, &stmt, NULL);
-    sqlite3_bind_text  (stmt,1,letter,-1,SQLITE_STATIC);
-    sqlite3_bind_double(stmt,2,(double)mid_);
-    sqlite3_bind_double(stmt,3,(double)final_);
-    sqlite3_bind_int   (stmt,4,pass);
-    sqlite3_bind_int   (stmt,5,ever);
-    sqlite3_bind_text  (stmt,6,code,-1,SQLITE_TRANSIENT);
-    int rc=sqlite3_step(stmt);
+    sqlite3_bind_text  (stmt, 1, letter, -1, SQLITE_STATIC);
+    sqlite3_bind_double(stmt, 2, (double)mid_);
+    sqlite3_bind_double(stmt, 3, (double)final_);
+    sqlite3_bind_int   (stmt, 4, pass);
+    sqlite3_bind_int   (stmt, 5, ever);
+    sqlite3_bind_text  (stmt, 6, code, -1, SQLITE_TRANSIENT);
+    int rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
-    return (rc==SQLITE_DONE)?sqlite3_changes(gDB):0;
+    return (rc == SQLITE_DONE) ? sqlite3_changes(gDB) : 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+ * DB_UpdateScore — convenience wrapper using default 30/70 ratio
+ * ───────────────────────────────────────────────────────────────────── */
+int DB_UpdateScore(const char *code, float mid_, float final_)
+{
+    return DB_UpdateScoreRatio(code, mid_, final_, 3);
 }
 
 /* ─────────────────────────────────────────────────────────────────────
  * DB_ClearScore
  * ───────────────────────────────────────────────────────────────────── */
-int DB_ClearScore(const char *code){ return DB_UpdateScore(code,0.f,0.f); }
+int DB_ClearScore(const char *code) { return DB_UpdateScoreRatio(code, 0.f, 0.f, 3); }
 
 /* ─────────────────────────────────────────────────────────────────────
  * DB_SubjectExists

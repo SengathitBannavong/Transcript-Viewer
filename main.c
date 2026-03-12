@@ -23,6 +23,7 @@
 
 #include "app_data.h"               /* gPlayer + gTypeName                */
 #include "db.h"                     /* SQLite backend                     */
+#include "score_logic.h"            /* CPA / graduation / alert logic     */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -70,6 +71,14 @@ static bool  gDBReady    = false;     /* true = DB loaded, show main UI         
 static char  gUserName[26] = {0};    /* entered username (max 25 chars + NUL)     */
 static int   gNameLen    = 0;
 
+/* --- Score/player refresh helper ------------------------------------- */
+/* Calls DB_Query then recomputes graduation status + alert level.       */
+static void RefreshPlayer(void)
+{
+    DB_Query(&gPlayer);
+    update_player_status(&gPlayer);
+}
+
 /* --- Command dispatcher ----------------------------------------------- */
 #include "cmd.h"
 
@@ -94,7 +103,7 @@ static void InitPlayerDB(void)
     }
     memset(&gPlayer, 0, sizeof(gPlayer));
     strncpy(gPlayer.name_player, gUserName, MAXSIZENAME - 1);
-    DB_Query(&gPlayer);
+    RefreshPlayer();
     gDBReady   = true;
     gNameInput = false;
     char title[64];
@@ -296,7 +305,7 @@ int main(void)
                     (Clay_Dimensions){ (float)WIN_W, (float)WIN_H },
                     (Clay_ErrorHandler){ HandleClayError, NULL });
     Clay_SetMeasureTextFunction(Raylib_MeasureText, gFonts);
-    Clay_SetDebugModeEnabled(true);  /* F1 toggles at runtime */
+    Clay_SetDebugModeEnabled(false);  /* F1 toggles at runtime */
 
     /* Main loop */
     while (!WindowShouldClose()) {

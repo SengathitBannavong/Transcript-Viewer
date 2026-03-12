@@ -6,11 +6,12 @@
  *
  * Supported commands
  * ------------------
- *   type  <0-11>             Switch sidebar to that subject-type section
- *   score <CODE> <mid> <fin> Update scores for a subject
- *   clear <CODE>             Reset a subject score back to X / 0.0
- *   logout                   Close DB and return to the name-input screen
- *   help                     Show available commands in the toast
+ *   type  <0-11>                      Switch sidebar to that subject-type section
+ *   score <CODE> <mid> <fin> [ratio]  Update scores (ratio: 1=50/50, 2=40/60, 3=30/70)
+ *   clear <CODE>                      Reset a subject score back to X / 0.0
+ *   cpa                               Show overall CPA (all studied + pass only)
+ *   logout                            Close DB and return to the name-input screen
+ *   help                              Show available commands in the toast
  */
 
 #pragma once
@@ -62,7 +63,7 @@ static inline void ExecuteCommand(const char *input,
     /* ── help ── */
     if (strcmp(verb, "help") == 0) {
         snprintf(out_msg, msg_size,
-                 "type 0-11  |  score <CODE> <mid> <fin>  |  clear <CODE>  |  logout  |  help");
+                 "type 0-11  |  score <CODE> <mid> <fin> [ratio 1-3]  |  clear <CODE>  |  cpa  |  logout");
         return;
     }
 
@@ -83,16 +84,18 @@ static inline void ExecuteCommand(const char *input,
         return;
     }
 
-    /* ── score <CODE> <mid> <fin> ── */
+    /* ── score <CODE> <mid> <fin> [ratio] ── */
     if (strcmp(verb, "score") == 0) {
         if (argc < 5) {
             snprintf(out_msg, msg_size,
-                     "score: usage: score <CODE> <mid> <final>");
+                     "score: usage: score <CODE> <mid> <final> [ratio]  (ratio: 1=50/50  2=40/60  3=30/70)");
             return;
         }
         const char *code = argv[2];
         float  mid_  = (float)atof(argv[3]);
         float  fin_  = (float)atof(argv[4]);
+        int    ratio = (argc >= 6) ? atoi(argv[5]) : 3;  /* default 30/70 */
+        if (ratio < 1 || ratio > 3) ratio = 3;
         if (mid_ < 0.f || mid_ > 10.f || fin_ < 0.f || fin_ > 10.f) {
             snprintf(out_msg, msg_size, "score: values must be in 0.0-10.0");
             return;
@@ -101,10 +104,13 @@ static inline void ExecuteCommand(const char *input,
             snprintf(out_msg, msg_size, "score: subject '%s' not found", code);
             return;
         }
-        int changed = DB_UpdateScore(code, mid_, fin_);
+        static const char *ratio_labels[] = { "", "50/50", "40/60", "30/70" };
+        int changed = DB_UpdateScoreRatio(code, mid_, fin_, ratio);
         if (changed) {
-            DB_Query(&gPlayer);
-            snprintf(out_msg, msg_size, "Updated %s: mid=%.1f final=%.1f", code, mid_, fin_);
+            RefreshPlayer();
+            snprintf(out_msg, msg_size,
+                     "Updated %s: mid=%.1f  final=%.1f  ratio=%s",
+                     code, mid_, fin_, ratio_labels[ratio]);
         } else {
             snprintf(out_msg, msg_size, "score: update failed for '%s'", code);
         }
@@ -123,8 +129,20 @@ static inline void ExecuteCommand(const char *input,
             return;
         }
         DB_ClearScore(code);
-        DB_Query(&gPlayer);
+        RefreshPlayer();
         snprintf(out_msg, msg_size, "Cleared score for %s", code);
+        return;
+    }
+
+    /* ── cpa ── */
+    if (strcmp(verb, "cpa") == 0) {
+        float cpa_all  = calc_cpa(&gPlayer, 0);
+        float cpa_pass = calc_cpa(&gPlayer, 1);
+        int   eff      = calc_effective_credits(&gPlayer);
+        int   req      = calc_required_credits();
+        snprintf(out_msg, msg_size,
+                 "CPA all=%.3f  pass=%.3f  |  Credits %d/%d  |  Alert=%d",
+                 cpa_all, cpa_pass, eff, req, (int)gPlayer.status_alert);
         return;
     }
 

@@ -501,11 +501,12 @@ static void RenderMainContent(void)
             }) {
                 CLAY_TEXT(CS(gTypeName[gActiveNav]), TC(C_TEXT, 20));
                 CLAY_TEXT(
-                    DS("Player: %s   |   %d subjects  |  passed %d/%d credits",
+                    DS("Player: %s   |   %d subjects  |  passed %d/%d credits  |  CPA %.2f",
                        gUserName,
                        st->Total_Subject,
                        st->count_passCredit,
-                       st->Total_Credit),
+                       st->Total_Credit,
+                       calc_cpa(&gPlayer, 0)),
                     TC(C_SUBTEXT, 11));
             }
 
@@ -533,26 +534,32 @@ static void RenderMainContent(void)
                 .layoutDirection = CLAY_LEFT_TO_RIGHT,
             },
         }) {
-            /* global stats */
-            RenderSummaryCard(0, "Total Credits Passed",
+            /* global credit stats */
+            RenderSummaryCard(0, "Credits Passed",
                 DS("%d", gPlayer.ToTal_credit_pass), C_GREEN);
 
-            RenderSummaryCard(1, "Credits Not Passed",
+            RenderSummaryCard(1, "Credits Failed",
                 DS("%d", gPlayer.ToTal_credit_npass), C_RED);
 
-            /* current section stats */
-            RenderSummaryCard(2, "Subjects (passed/total)",
-                DS("%d / %d", st->count_passSubject, st->Total_Subject), C_ACCENT);
+            /* GPA (all studied + pass only) */
+            float cpa_all  = calc_cpa(&gPlayer, 0);
+            float cpa_pass = calc_cpa(&gPlayer, 1);
+            RenderSummaryCard(2, "CPA (All studied)",
+                DS("%.3f", cpa_all), C_ACCENT);
 
-            RenderSummaryCard(3, "Credits (passed/total)",
-                DS("%d / %d", st->count_passCredit, st->Total_Credit), C_YELLOW);
+            RenderSummaryCard(3, "CPA (Pass only)",
+                DS("%.3f", cpa_pass), C_YELLOW);
 
-            /* graduation badge */
+            /* current section credits */
+            RenderSummaryCard(4, "Section Credits (pass/total)",
+                DS("%d / %d", st->count_passCredit, st->Total_Credit), C_ACCENT);
+
+            /* graduation status */
             CLAY(CLAY_ID("GradCard"), {
                 .layout = {
                     .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
                     .padding         = { 14, 14, 10, 10 },
-                    .childGap        = 6,
+                    .childGap        = 4,
                     .layoutDirection = CLAY_TOP_TO_BOTTOM,
                 },
                 .backgroundColor = gPlayer.status_can_grauate ? C_GREEN_BG : C_RED_BG,
@@ -560,11 +567,52 @@ static void RenderMainContent(void)
                 .border          = { .color = gPlayer.status_can_grauate ? C_GREEN : C_RED,
                                      .width = { .left=1,.right=1,.top=1,.bottom=1 } },
             }) {
-                CLAY_TEXT(CLAY_STRING("Can Graduate"),
-                    TC(C_SUBTEXT, 10));
-                CLAY_TEXT(gPlayer.status_can_grauate
-                            ? CLAY_STRING("YES") : CLAY_STRING("NO"),
-                    TC(gPlayer.status_can_grauate ? C_GREEN : C_RED, 22));
+                CLAY_TEXT(CLAY_STRING("Graduation"), TC(C_SUBTEXT, 10));
+                if (gPlayer.status_can_grauate) {
+                    CLAY_TEXT(CLAY_STRING("READY"), TC(C_GREEN, 20));
+                } else {
+                    int eff = calc_effective_credits(&gPlayer);
+                    int req = calc_required_credits();
+                    CLAY_TEXT(DS("%d/%d cr", eff, req), TC(C_RED, 18));
+                    CLAY_TEXT(CLAY_STRING("Not ready"), TC(C_SUBTEXT, 10));
+                }
+            }
+        }
+
+        /* ── Academic alert banner (hidden when alert level = 0) ── */
+        if (gPlayer.status_alert > 0) {
+            static const Clay_Color alert_fg[4] = {
+                {  0,  0,  0,  0},            /* 0: unused      */
+                {234,179,  8,255},            /* 1: C_YELLOW    */
+                { 99,102,241,255},            /* 2: C_ACCENT    */
+                {239, 68, 68,255},            /* 3: C_RED       */
+            };
+            static const Clay_Color alert_bg[4] = {
+                {  0,  0,  0,  0},
+                { 60, 50, 10,255},            /* C_YELLOW_BG    */
+                { 22, 23, 58,255},            /* C_ACCENT_BG    */
+                { 70, 18, 18,255},            /* C_RED_BG       */
+            };
+            static const char *alert_label[4] = {
+                "", "Caution", "Warning", "Critical"
+            };
+            CLAY(CLAY_ID("AlertBanner"), {
+                .layout = {
+                    .sizing         = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(32) },
+                    .padding        = { 14, 14, 0, 0 },
+                    .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                },
+                .backgroundColor = alert_bg[gPlayer.status_alert],
+                .cornerRadius    = CLAY_CORNER_RADIUS(6),
+                .border = { .color = alert_fg[gPlayer.status_alert],
+                            .width = { .left = 3 } },
+            }) {
+                CLAY_TEXT(
+                    DS("Academic Alert  [Level %d — %s]  %d studied-but-failed credits",
+                       (int)gPlayer.status_alert,
+                       alert_label[gPlayer.status_alert],
+                       gPlayer.ToTal_credit_npass),
+                    TC(alert_fg[gPlayer.status_alert], 11));
             }
         }
 
@@ -623,11 +671,12 @@ static void RenderMainContent(void)
                 .border          = { .color = C_BORDER, .width = { .top = 1 } },
             }) {
                 CLAY_TEXT(
-                    DS("Showing %d subjects  |  %d passed  |  %d/%d credits",
+                    DS("Showing %d subjects  |  %d passed  |  %d/%d credits  |  CPA %.2f",
                        st->Total_Subject,
                        st->count_passSubject,
                        st->count_passCredit,
-                       st->Total_Credit),
+                       st->Total_Credit,
+                       calc_cpa_type(&gPlayer, gActiveNav, 0)),
                     TC(C_SUBTEXT, 10));
 
                 CLAY(CLAY_ID("FtSpacer"), {
@@ -740,7 +789,7 @@ static void RenderNameInput(void)
         }) {
             if (gNameLen > 0) {
                 if (DB_Exists(gUserName))
-                    CLAY_TEXT(DS("db_%s.db  found — load existing data", gUserName),
+                    CLAY_TEXT(DS("db_%s.db  found | load existing data", gUserName),
                               TC(C_GREEN, 10));
                 else
                     CLAY_TEXT(DS("db_%s.db  will be created", gUserName),
