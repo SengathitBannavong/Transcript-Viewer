@@ -24,7 +24,7 @@ else
     OS_TLDFLAGS  = -lsqlite3
 endif
 
-CFLAGS      = -O2 -Wall -Wno-missing-braces -I$(RAYLIB)/include -I$(SRCDIR)
+CFLAGS      = -O2 -Wall -Wno-missing-braces -I$(RAYLIB)/include -I$(SRCDIR) -I.
 LDFLAGS     = $(RAYLIB)/lib/libraylib.a $(SQLITE_OBJ) $(OS_LDFLAGS) -lm
 TARGET      = ./bin/program$(EXT)
 
