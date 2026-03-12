@@ -1,0 +1,223 @@
+name: Build & Package
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Linux build
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+  build-linux:
+    name: Build (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc make curl \
+            libsqlite3-dev \
+            libgl-dev \
+            libx11-dev libxrandr-dev libxi-dev \
+            libxinerama-dev libxcursor-dev
+
+      - name: Build
+        run: make
+
+      - name: Verify binary exists
+        run: |
+          echo "=== bin/ contents ==="
+          ls -la bin/
+          echo "=== Checking program binary ==="
+          file bin/program
+
+      - name: Download font for package
+        run: |
+          mkdir -p Font/Space_Mono/static
+          curl -fsSL \
+            "https://github.com/google/fonts/raw/main/ofl/spacemono/SpaceMono-Bold.ttf" \
+            -o Font/Space_Mono/static/SpaceMono-Bold.ttf
+
+      - name: Package
+        run: |
+          PKG=transcript-viewer-linux
+          mkdir -p dist/$PKG
+          cp bin/program        dist/$PKG/
+          cp -r assets          dist/$PKG/
+          cp -r Font            dist/$PKG/
+          cp README.md          dist/$PKG/
+          cp LICENSE.md         dist/$PKG/
+          tar -czf $PKG.tar.gz -C dist $PKG
+          echo "=== Package contents ==="
+          tar -tzf $PKG.tar.gz
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: transcript-viewer-linux
+          path: transcript-viewer-linux.tar.gz
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Windows build (MSYS2 MinGW64)
+# ─────────────────────────────────────────────────────────────────────────────
+  build-windows:
+    name: Build (Windows)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            make
+            curl
+            unzip
+
+      - name: Build
+        run: make
+
+      - name: Verify binary exists
+        run: |
+          echo "=== bin/ contents ==="
+          ls -la bin/
+          echo "=== Checking program.exe ==="
+          file bin/program.exe
+
+      - name: Download font for package
+        run: |
+          mkdir -p Font/Space_Mono/static
+          curl -fsSL \
+            "https://github.com/google/fonts/raw/main/ofl/spacemono/SpaceMono-Bold.ttf" \
+            -o Font/Space_Mono/static/SpaceMono-Bold.ttf
+
+      - name: Collect required DLLs
+        shell: pwsh
+        run: |
+          # ดึงรายชื่อ DLL ที่ program.exe ต้องการจริง ๆ
+          $exe     = "bin\program.exe"
+          $mingw   = "C:\msys64\mingw64\bin"
+          $dllDir  = "bin\dlls"
+          New-Item -ItemType Directory -Force -Path $dllDir | Out-Null
+
+          # ใช้ objdump เพื่อหา DLL dependencies
+          $needed = & "C:\msys64\mingw64\bin\objdump.exe" -p $exe |
+                    Select-String "DLL Name:" |
+                    ForEach-Object { ($_ -split "DLL Name:\s+")[1].Trim() }
+
+          Write-Host "=== DLLs needed by program.exe ==="
+          $needed | ForEach-Object { Write-Host "  $_" }
+
+          foreach ($dll in $needed) {
+            $src = Join-Path $mingw $dll
+            if (Test-Path $src) {
+              Copy-Item $src $dllDir
+              Write-Host "Copied: $dll"
+            } else {
+              Write-Host "Skipped (system DLL): $dll"
+            }
+          }
+
+          Write-Host "=== Collected DLLs ==="
+          Get-ChildItem $dllDir | Select-Object Name
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $pkg = "transcript-viewer-windows"
+          New-Item -ItemType Directory -Force -Path "dist/$pkg" | Out-Null
+
+          # Copy binary
+          Copy-Item "bin/program.exe"        "dist/$pkg/"
+
+          # Copy collected DLLs
+          if (Test-Path "bin/dlls") {
+            Copy-Item "bin/dlls/*.dll"       "dist/$pkg/"
+          }
+
+          # Copy assets and extras
+          Copy-Item -Recurse "assets"        "dist/$pkg/"
+          Copy-Item -Recurse "Font"          "dist/$pkg/"
+          Copy-Item "README.md"              "dist/$pkg/"
+          Copy-Item "LICENSE.md"             "dist/$pkg/"
+
+          # Zip
+          Compress-Archive -Path "dist/$pkg" -DestinationPath "$pkg.zip"
+
+          Write-Host "=== Package contents ==="
+          Expand-Archive -Path "$pkg.zip" -DestinationPath "dist/verify" -Force
+          Get-ChildItem -Recurse "dist/verify" | Select-Object FullName
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: transcript-viewer-windows
+          path: transcript-viewer-windows.zip
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  GitHub Release  (only on version tags: v1.0, v1.2.3, …)
+# ─────────────────────────────────────────────────────────────────────────────
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: transcript-viewer-linux
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: transcript-viewer-windows
+
+      - name: Verify downloaded files
+        run: |
+          echo "=== Files ready for release ==="
+          ls -lh transcript-viewer-linux.tar.gz
+          ls -lh transcript-viewer-windows.zip
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Transcript Viewer ${{ github.ref_name }}"
+          body: |
+            ## Transcript Viewer ${{ github.ref_name }}
+
+            ### Downloads
+            | Platform | File |
+            |---|---|
+            | Linux (x86-64) | `transcript-viewer-linux.tar.gz` |
+            | Windows (x86-64) | `transcript-viewer-windows.zip` |
+
+            ### Quick start
+            1. Extract the archive.
+            2. Edit `assets/fonts.cfg` if you want a different font (Space Mono is bundled).
+            3. Run `program` (Linux) or `program.exe` (Windows).
+            4. Enter your username and press **Enter**.
+
+            > **Windows users:** All required DLLs are bundled — no extra installation needed.
+
+            See [README.md](https://github.com/${{ github.repository }}/blob/main/README.md) for full setup and usage instructions.
+          files: |
+            transcript-viewer-linux.tar.gz
+            transcript-viewer-windows.zip
+          draft: false
+          prerelease: false
