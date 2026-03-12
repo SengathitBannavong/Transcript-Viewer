@@ -1,6 +1,6 @@
 # Transcript Viewer v1.0
 
-A desktop student transcript viewer built in **C** using **Clay UI** and **Raylib**.  
+A desktop student transcript viewer built in **C** using **Clay UI** and **Raylib**. This is a [Table Program](https://github.com/J9-239717/Table-List-Subject) upgrade.   
 Stores per-user data in a local **SQLite3** database. No server or internet connection required at runtime. ( **Vibe Code** )
 
 ---
