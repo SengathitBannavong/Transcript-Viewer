@@ -1,9 +1,13 @@
 # subjects.dat — merged curriculum data
 # Format: CODE  TERM  CREDIT  Subject Name
-# Sections match index_subject_type enum in Struct_Table.h
+# Sections match index_subject_type enum in struct_table.h
+#
+# Fixed required IDs: 1=co_so_nganh  2=dai_cuong     3=the_thao
+#                     4=ly_luat_chinh_tri  5=tu_chon  12=thuc_tap  13=do_an_tot_nghiep
+# Flexible module IDs 6-11: define only the modules your major uses.
 #
 
-[0] Co So Nganh
+[1] Co So Nganh
 IT2000    1     3     Introduction to IT and Communications
 IT3011    2     2     Data Structures and Algorithms
 IT3030    3     3     Computer Architecture
@@ -24,7 +28,7 @@ IT4015    6     3     Introduction to Information Security
 IT4244    8     2     IT Project Management
 IT4653    6     2     Deep Learning and Its Applications
 
-[1] Dai Cuong
+[2] Dai Cuong
 IT1108    1     4     Introduction to Programming
 IT3020    2     3     Discrete Mathematics
 MI1111    1     4     Calculus I
@@ -36,7 +40,7 @@ MI3052    3     2     Introduction to Optimization Methods
 PH1110    2     3     General Physics I
 PH1120    3     3     General Physics II
 
-[2] The Thao
+[3] The Thao
 PE1014    1     0     Theoretical Physical Education and Sports
 PE1015    0     0     Freehand Gymnastics
 PE1024    0     0     Swimming
@@ -80,7 +84,7 @@ PE3303    0     0     Advanced Basketball 3
 PE3304    0     0     Advanced Basketball 4
 PE3305    0     0     Advanced Basketball 5
 
-[3] Ly Luat Chinh Tri
+[4] Ly Luat Chinh Tri
 EM1170    2     2     General Law
 SSH1111   3     3     Marxist-Leninist Philosophy
 SSH1121   4     2     Marxist-Leninist Political Economy
@@ -88,7 +92,7 @@ SSH1131   5     2     Scientific Socialism
 SSH1141   6     2     History of the Communist Party of Vietnam
 SSH1151   7     2     Ho Chi Minh's Ideology
 
-[4] Tu Chon
+[5] Tu Chon
 CH2021    0     2     Innovation and Entrepreneurship
 ED3220    0     2     Soft Skills
 ED3280    0     2     Applied Psychology
@@ -100,7 +104,7 @@ ME3123    0     2     Industrial Art Design
 ME3124    0     2     Product Promotion Design
 TEX3123   0     2     Industrial Art Design
 
-[5] Thuc Tap
+[12] Thuc Tap
 IT4991    6     2     Technical Internship
 
 [6] Modul I
@@ -129,5 +133,5 @@ IT4788    7     3     Cross-Platform Application Development
 IT4613    7     3     Recommender Systems
 IT4663    6     3     Optimization and Planning
 
-[11] Do An Tot Nghiep
+[13] Do An Tot Nghiep
 IT4995    8     6     Bachelor's Graduation Project

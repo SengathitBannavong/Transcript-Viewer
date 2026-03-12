@@ -8,15 +8,16 @@
  *
  * Public API
  * ──────────
- *   LIMIT_FOR_GRADUATE[]         — required credits/subjects per type (dynamic)
- *   init_grad_limits(p)          — populate LIMIT_FOR_GRADUATE from Subject_Type.Total_Credit
  *   score_to_gpa(letter, plus)   — 4-scale GPA point for a stored grade
  *   calc_cpa(player, pass_only)  — overall CPA (0=all studied, 1=pass only)
  *   calc_cpa_type(player,t,p)    — CPA for one subject type
  *   calc_status_alert(npass)     — academic alert level (0-3)
  *   calc_effective_credits(p)    — credits toward graduation (module choice)
- *   calc_required_credits()      — total credits required to graduate
+ *   calc_required_credits(p)     — total credits required to graduate
  *   update_player_status(p)      — recompute status_can_grauate + status_alert
+ *
+ *  Graduation rules come from gGradRules[] (populated by DB_LoadGradRules()
+ *  seeded from assets/grad_config.cfg into the user's per-major DB).
  */
 
 #pragma once
@@ -37,31 +38,15 @@
  *  All other entries are set at runtime by init_grad_limits() to the sum of
  *  all credits for that type from subjects.dat (via Subject_Type.Total_Credit).
  * ──────────────────────────────────────────────────────────────────────── */
-static int LIMIT_FOR_GRADUATE[sizeSubjectType] = {
-     0, /* co_so_nganh       — set by init_grad_limits() */
-     0, /* dai_cuong         — set by init_grad_limits() */
-     4, /* the_thao          — fixed: min sports subjects (not credits) */
-     0, /* ly_luat_chinh_tri — set by init_grad_limits() */
-     9, /* tu_chon           — fixed: min elective credits */
-     0, /* thuc_tap          — set by init_grad_limits() */
-     0, /* modunI            — set by init_grad_limits() */
-     0, /* modunII           — set by init_grad_limits() */
-     0, /* modunIII          — set by init_grad_limits() */
-     0, /* modunIV           — set by init_grad_limits() */
-     0, /* modunV            — set by init_grad_limits() */
-     0, /* do_an_tot_nghiep  — set by init_grad_limits() */
-};
-
-/* ── Populate LIMIT_FOR_GRADUATE from curriculum data ────────────────────
- *  Must be called after DB_Query() has filled Subject_Type.Total_Credit.
- *  Skips the_thao and tu_chon which have fixed minimum requirements.
- * ──────────────────────────────────────────────────────────────────────── */
-static void init_grad_limits(Player *p)
+/* Resolve effective limit for type i:
+ *   GRAD_TOTAL_CREDIT        -> Total_Credit of that type (all credits in subjects.dat)
+ *   GRAD_FIXED / GRAD_SUBJECT_COUNT -> gGradRules[i].limit_val
+ */
+static int _sl_resolve_limit(Player *p, int i)
 {
-    for (int i = 0; i < sizeSubjectType; i++) {
-        if (i == the_thao || i == tu_chon) continue;
-        LIMIT_FOR_GRADUATE[i] = (int)p->numofSubjectType[i].Total_Credit;
-    }
+    if (gGradRules[i].mode == GRAD_TOTAL_CREDIT)
+        return (int)p->numofSubjectType[i].Total_Credit;
+    return gGradRules[i].limit_val;
 }
 
 /* ── Score letter → 4-scale GPA point ───────────────────────────────────
@@ -143,12 +128,6 @@ static float calc_cpa_type(Player *p, int t, int pass_only)
     return (credits == 0) ? 0.0f : total / (float)credits;
 }
 
-/* internal helper */
-static int _sl_max3(int a, int b, int c)
-{
-    int r = a; if (r < b) r = b; if (r < c) r = c; return r;
-}
-
 /* ── Effective credits toward graduation ─────────────────────────────────
  *  Respects the module-choice rules:
  *    • modules I / II / III — only the BEST one counts
@@ -158,22 +137,26 @@ static int _sl_max3(int a, int b, int c)
 static int calc_effective_credits(Player *p)
 {
     int count = 0;
+    int done[sizeSubjectType];
+    for (int k = 0; k < sizeSubjectType; k++) done[k] = 0;
     for (int i = 0; i < sizeSubjectType; i++) {
-        if (i == the_thao) continue;   /* sport: checked separately */
-        if (i == modunI) {
-            /* pick best of modunI / modunII / modunIII */
-            count += _sl_max3(
-                (int)p->numofSubjectType[modunI].count_passCredit,
-                (int)p->numofSubjectType[modunII].count_passCredit,
-                (int)p->numofSubjectType[modunIII].count_passCredit);
-            /* pick best of modunIV / modunV */
-            count += _sl_max3(
-                (int)p->numofSubjectType[modunIV].count_passCredit,
-                (int)p->numofSubjectType[modunV].count_passCredit, 0);
-            i = modunV;
-            continue;
+        if (done[i]) continue;
+        GradRule *r = &gGradRules[i];
+        if (r->mode == GRAD_SUBJECT_COUNT) { done[i] = 1; continue; }
+        if (r->group_id != 0) {
+            int best = 0;
+            for (int j = 0; j < sizeSubjectType; j++) {
+                if (gGradRules[j].group_id == r->group_id) {
+                    int pc = (int)p->numofSubjectType[j].count_passCredit;
+                    if (pc > best) best = pc;
+                    done[j] = 1;
+                }
+            }
+            count += best;
+        } else {
+            count += (int)p->numofSubjectType[i].count_passCredit;
+            done[i] = 1;
         }
-        count += (int)p->numofSubjectType[i].count_passCredit;
     }
     return count;
 }
@@ -182,14 +165,25 @@ static int calc_effective_credits(Player *p)
  *  Sums LIMIT_FOR_GRADUATE, counting only one limit for the module groups
  *  (same skip logic used in remaining_credit from the old program).
  * ──────────────────────────────────────────────────────────────────────── */
-static int calc_required_credits(void)
+static int calc_required_credits(Player *p)
 {
     int total = 0;
+    int done[sizeSubjectType];
+    for (int k = 0; k < sizeSubjectType; k++) done[k] = 0;
     for (int i = 0; i < sizeSubjectType; i++) {
-        if (i == the_thao) continue;            /* sport: not counted by credits */
-        total += LIMIT_FOR_GRADUATE[i];
-        if (i == modunI)  i = modunIII;         /* skip II, III (same limit)     */
-        if (i == modunIV) i = modunV;           /* skip V (same limit)           */
+        if (done[i]) continue;
+        GradRule *r = &gGradRules[i];
+        if (r->mode == GRAD_SUBJECT_COUNT) { done[i] = 1; continue; }
+        if (r->group_id != 0) {
+            int lim = _sl_resolve_limit(p, i);  /* first member's limit */
+            for (int j = 0; j < sizeSubjectType; j++) {
+                if (gGradRules[j].group_id == r->group_id) done[j] = 1;
+            }
+            total += lim;
+        } else {
+            total += _sl_resolve_limit(p, i);
+            done[i] = 1;
+        }
     }
     return total;
 }
@@ -197,62 +191,88 @@ static int calc_required_credits(void)
 /* ── Recompute status_can_grauate and status_alert on *p ─────────────────
  *  Call this after every DB_Query() to keep the player state correct.
  *
- *  Graduation criteria (all must be met):
- *    1. Sport: count_passSubject >= LIMIT_FOR_GRADUATE[the_thao]
- *    2. Each non-sport, non-module type: count_passCredit >= limit
- *    3. Modules: max(I,II,III passCredit) >= limit[modunI]
- *                max(IV,V passCredit)    >= limit[modunIV]
- *    4. CPA (all studied) >= 2.0
+ *  Graduation criteria loaded from gGradRules[] (seeded from grad_config.cfg):
+ *    • GRAD_SUBJECT_COUNT — must pass limit_val subjects of that type
+ *    • group (group_id > 0) — best member's passCredits must meet its own limit
+ *    • standalone — passCredits must meet its own resolved limit
+ *    • CPA (all studied) >= 2.0
  * ──────────────────────────────────────────────────────────────────────── */
 static void update_player_status(Player *p)
 {
-    /* Sync graduation limits with the actual curriculum in the DB */
-    init_grad_limits(p);
-
     /* --- Academic alert --- */
     p->status_alert = (unsigned)calc_status_alert(p->ToTal_credit_npass);
 
-    /* --- Graduation check --- */
+    /* --- Graduation check (data-driven via gGradRules) --- */
+    p->status_can_grauate = 1;   /* assume pass; set 0 on first failure */
 
-    /* 1. Sport: need enough SUBJECTS passed (not credits) */
-    if ((int)p->numofSubjectType[the_thao].count_passSubject
-            < LIMIT_FOR_GRADUATE[the_thao]) {
-        p->status_can_grauate = 0;
-        return;
-    }
+    int done[sizeSubjectType];
+    for (int k = 0; k < sizeSubjectType; k++) done[k] = 0;
 
-    /* 2. All other types (including module logic) */
     for (int i = 0; i < sizeSubjectType; i++) {
-        if (i == the_thao) continue;
+        if (done[i]) continue;
+        GradRule *r = &gGradRules[i];
 
-        if (i == modunI) {
-            int best123 = _sl_max3(
-                (int)p->numofSubjectType[modunI].count_passCredit,
-                (int)p->numofSubjectType[modunII].count_passCredit,
-                (int)p->numofSubjectType[modunIII].count_passCredit);
-            int best45 = _sl_max3(
-                (int)p->numofSubjectType[modunIV].count_passCredit,
-                (int)p->numofSubjectType[modunV].count_passCredit, 0);
-            if (best123 < LIMIT_FOR_GRADUATE[modunI] ||
-                best45  < LIMIT_FOR_GRADUATE[modunIV]) {
+        if (r->mode == GRAD_SUBJECT_COUNT) {
+            /* e.g. the_thao: count subjects, not credits */
+            if ((int)p->numofSubjectType[i].count_passSubject < r->limit_val) {
                 p->status_can_grauate = 0;
                 return;
             }
-            i = modunV;
-            continue;
-        }
-
-        if ((int)p->numofSubjectType[i].count_passCredit < LIMIT_FOR_GRADUATE[i]) {
-            p->status_can_grauate = 0;
-            return;
+            done[i] = 1;
+        } else if (r->group_id != 0) {
+            /* pick-best group: the member with the most passCredits
+               must reach its own limit */
+            int best_pass  = -1;
+            int best_limit =  0;
+            for (int j = 0; j < sizeSubjectType; j++) {
+                if (gGradRules[j].group_id == r->group_id) {
+                    int pc  = (int)p->numofSubjectType[j].count_passCredit;
+                    int lim = _sl_resolve_limit(p, j);
+                    if (pc > best_pass) { best_pass = pc; best_limit = lim; }
+                    done[j] = 1;
+                }
+            }
+            if (best_pass < best_limit) {
+                p->status_can_grauate = 0;
+                return;
+            }
+        } else {
+            /* standalone credit requirement */
+            int lim = _sl_resolve_limit(p, i);
+            if ((int)p->numofSubjectType[i].count_passCredit < lim) {
+                p->status_can_grauate = 0;
+                return;
+            }
+            done[i] = 1;
         }
     }
 
-    /* 3. CPA (all studied) >= 2.0 */
+    /* CPA (all studied) >= 2.0 */
     if (calc_cpa(p, 0) < 2.0f) {
         p->status_can_grauate = 0;
         return;
     }
+}
 
-    p->status_can_grauate = 1;
+/* ── Detect standalone types with no subjects loaded ───────────────────────
+ *  Module groups (group_id > 0) are EXEMPT: the pick-best rule means any
+ *  member being present is sufficient, and some majors omit some modules.
+ *  Required types {1,2,3,4,5,12,13} with Total_Subject == 0 are flagged.
+ *  Module slots 6-11 are flexible and never flagged.
+ *  out[i] = 1 if flagged, 0 otherwise.  Returns count of flagged types.
+ * ──────────────────────────────────────────────────────────────────────── */
+static const int _SL_REQUIRED[] = {1, 2, 3, 4, 5, 12, 13};
+#define _SL_N_REQUIRED ((int)(sizeof(_SL_REQUIRED)/sizeof(_SL_REQUIRED[0])))
+static int calc_missing_types(Player *p, int out[sizeSubjectType])
+{
+    int count = 0;
+    for (int i = 0; i < sizeSubjectType; i++) out[i] = 0;
+    for (int k = 0; k < _SL_N_REQUIRED; k++) {
+        int i = _SL_REQUIRED[k];
+        if ((int)p->numofSubjectType[i].Total_Subject == 0) {
+            out[i] = 1;
+            count++;
+        }
+    }
+    return count;
 }

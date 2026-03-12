@@ -40,7 +40,7 @@ static Font gFonts[1];
 static bool gCustomFont = false;
 
 /* active sidebar item: index into gPlayer.numofSubjectType */
-static int  gActiveNav  = 0;
+static int  gActiveNav  = 1;
 
 /* current window size; updated every frame for correct backdrop sizing */
 static int  gScreenW    = WIN_W;
@@ -88,6 +88,8 @@ static void RefreshPlayer(void)
 /* --- DB initializer (called when user confirms name on startup) -------- */
 static void InitPlayerDB(void)
 {
+    for(int i = 0; i < sizeSubjectType; i++)
+      gTypeName[i][0] = 0;
     bool isNew = !DB_Exists(gUserName);
     if (!DB_Open(gUserName)) {
         snprintf(gResultMsg, sizeof(gResultMsg),
@@ -101,6 +103,12 @@ static void InitPlayerDB(void)
         DB_SeedFromDat();
         if (strcmp(gUserName, "test") == 0) DB_LoadScores_Test();
     }
+    DB_SeedGradRules();   /* INSERT OR IGNORE — safe for existing DBs too */
+    DB_LoadGradRules();
+    DB_ValidateData();
+    /* Auto-reload: if validation found problems, re-parse the asset files so
+     * that any fixes the user made since the last run are picked up.       */
+    if (gDataWarnCount > 0) DB_ReloadData();
     memset(&gPlayer, 0, sizeof(gPlayer));
     strncpy(gPlayer.name_player, gUserName, MAXSIZENAME - 1);
     RefreshPlayer();

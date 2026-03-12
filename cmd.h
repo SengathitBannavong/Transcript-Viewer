@@ -54,7 +54,7 @@ static inline void ExecuteCommand(const char *input,
 
     if (argc < 2) {
         snprintf(out_msg, msg_size,
-                 "Usage: type <0-11>  |  score <CODE> <mid> <fin>  |  clear <CODE>  |  help");
+                 "type <1-13>  |  score <CODE> <mid> <fin>  |  clear <CODE>  |  reload  |  help");
         return;
     }
 
@@ -63,7 +63,7 @@ static inline void ExecuteCommand(const char *input,
     /* ── help ── */
     if (strcmp(verb, "help") == 0) {
         snprintf(out_msg, msg_size,
-                 "type 0-11  |  score <CODE> <mid> <fin> [ratio 1-3]  |  clear <CODE>  |  cpa  |  logout");
+                 "type 1-13  |  score <CODE> <mid> <fin> [ratio 1-3]  |  clear <CODE>  |  cpa  |  reload  |  logout");
         return;
     }
 
@@ -139,10 +139,27 @@ static inline void ExecuteCommand(const char *input,
         float cpa_all  = calc_cpa(&gPlayer, 0);
         float cpa_pass = calc_cpa(&gPlayer, 1);
         int   eff      = calc_effective_credits(&gPlayer);
-        int   req      = calc_required_credits();
+        int   req      = calc_required_credits(&gPlayer);
         snprintf(out_msg, msg_size,
                  "CPA all=%.3f  pass=%.3f  |  Credits %d/%d  |  Alert=%d",
                  cpa_all, cpa_pass, eff, req, (int)gPlayer.status_alert);
+        return;
+    }
+
+    /* ── reload ── */
+    if (strcmp(verb, "reload") == 0) {
+        int prev_warns = gDataWarnCount;
+        DB_ReloadData();   /* re-parse subjects.dat + grad_config.cfg, re-validate */
+        RefreshPlayer();   /* rebuild gTypeName[] + gPlayer from the updated DB    */
+        if (gDataWarnCount == 0) {
+            snprintf(out_msg, msg_size,
+                     "Reload OK. all data valid (was %d warning%s)",
+                     prev_warns, prev_warns == 1 ? "" : "s");
+        } else {
+            snprintf(out_msg, msg_size,
+                     "Reload done. %d warning%s remain (check data banner)",
+                     gDataWarnCount, gDataWarnCount == 1 ? "" : "s");
+        }
         return;
     }
 

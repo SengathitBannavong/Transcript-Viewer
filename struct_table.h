@@ -30,19 +30,21 @@ typedef struct _Subject_Type {
 } Subject_Type;
 
 typedef enum {
-    co_so_nganh,
-    dai_cuong,
-    the_thao,
-    ly_luat_chinh_tri,
-    tu_chon,
-    thuc_tap,
-    modunI,
-    modunII,
-    modunIII,
-    modunIV,
-    modunV,
-    do_an_tot_nghiep,
-    sizeSubjectType
+    _slot_unused = 0,     /* reserved — IDs start at 1                         */
+    co_so_nganh = 1,      /* core major subjects                               */
+    dai_cuong = 2,        /* general education subjects                        */
+    the_thao = 3,         /* sport/physical education (counted by subject)     */
+    ly_luat_chinh_tri = 4,/* law & politics                                    */
+    tu_chon = 5,          /* supplementary/elective knowledge                 */
+    modunI   = 6,         /* module slots 6-11: flexible per major             */
+    modunII  = 7,
+    modunIII = 8,
+    modunIV  = 9,
+    modunV   = 10,
+    modunVI  = 11,        /* extra slot; unused modules stay empty             */
+    thuc_tap = 12,        /* internship                                        */
+    do_an_tot_nghiep = 13,/* thesis / graduation project                       */
+    sizeSubjectType = 14  /* total array size (index 0 unused)                 */
 } index_subject_type;
 
 typedef struct Player {
@@ -53,5 +55,21 @@ typedef struct Player {
     unsigned int status_can_grauate : 1;
     unsigned int status_alert : 2;
 } Player;
+
+/* ── Graduation rule for one subject type ────────────────────────────────
+ *  Loaded from the user DB (grad_rules table), originally seeded from
+ *  assets/grad_config.cfg.  Used exclusively by score_logic.h.
+ * ──────────────────────────────────────────────────────────────────────── */
+typedef enum {
+    GRAD_TOTAL_CREDIT  = 0,  /* must pass all credits defined for this type */
+    GRAD_FIXED         = 1,  /* must pass exactly limit_val credits          */
+    GRAD_SUBJECT_COUNT = 2,  /* must pass limit_val subjects (not credits)   */
+} GradMode;
+
+typedef struct {
+    int mode;      /* GradMode value                                          */
+    int limit_val; /* explicit limit for FIXED/SUBJECT_COUNT; 0 = auto       */
+    int group_id;  /* 0=standalone; same nonzero id = "pick best of group"   */
+} GradRule;
 
 #endif

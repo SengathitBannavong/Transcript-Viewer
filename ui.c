@@ -85,7 +85,7 @@ static Clay_String DS(const char *fmt, ...)
  *  SIDEBAR
  * ═══════════════════════════════════════════════════════════════════════ */
 
-static void RenderNavItem(int idx, const char *label)
+static void RenderNavItem(int idx, const char *label, int warn)
 {
     bool active = (idx == gActiveNav);
     Clay_Color bg  = active ? C_ACCENT_BG : C_TRANS;
@@ -119,6 +119,23 @@ static void RenderNavItem(int idx, const char *label)
             CLAY_TEXT(DS("%d", idx), TC(active ? C_WHITE : C_SUBTEXT, 9));
         }
         CLAY_TEXT(CS(label), TC(tc, 11));
+
+        /* push warning badge to the right edge */
+        if (warn) {
+            CLAY(CLAY_IDI("NavWSp", idx), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(1) } },
+            }) {}
+            CLAY(CLAY_IDI("NavWarn", idx), {
+                .layout = {
+                    .sizing         = { CLAY_SIZING_FIXED(15), CLAY_SIZING_FIXED(15) },
+                    .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+                },
+                .backgroundColor = C_RED,
+                .cornerRadius    = CLAY_CORNER_RADIUS(8),
+            }) {
+                CLAY_TEXT(CLAY_STRING("!"), TC(C_WHITE, 9));
+            }
+        }
     }
 }
 
@@ -174,9 +191,14 @@ static void RenderSidebar(void)
             },
         }) { CLAY_TEXT(CLAY_STRING("SUBJECT TYPES"), TC(C_SUBTEXT, 9)); }
 
-        /* one nav item per subject type */
-        for (int i = 0; i < sizeSubjectType; i++) {
-            RenderNavItem(i, gTypeName[i]);
+        /* one nav item per subject type — only show types that have subjects */
+        {
+            int _miss[sizeSubjectType];
+            calc_missing_types(&gPlayer, _miss);
+            for (int i = 0; i < sizeSubjectType; i++) {
+                if (gTypeName[i][0] != 0 && gPlayer.numofSubjectType[i].Total_Subject > 0)
+                    RenderNavItem(i, gTypeName[i], _miss[i]);
+            }
         }
 
         /* spacer */
@@ -550,9 +572,23 @@ static void RenderMainContent(void)
             RenderSummaryCard(3, "CPA (Pass only)",
                 DS("%.3f", cpa_pass), C_YELLOW);
 
-            /* current section credits */
-            RenderSummaryCard(4, "Section Credits (pass/total)",
-                DS("%d / %d", st->count_passCredit, st->Total_Credit), C_ACCENT);
+            /* overall graduation progress */
+            {
+                int eff = calc_effective_credits(&gPlayer);
+                int req = calc_required_credits(&gPlayer);
+                RenderSummaryCard(4, "Total Credits (eff/req)",
+                    DS("%d / %d", eff, req),
+                    eff >= req ? C_GREEN : C_YELLOW);
+            }
+
+            /* current section credits vs required limit */
+            {
+                int sec_want = _sl_resolve_limit(&gPlayer, gActiveNav);
+                int sec_pass = (int)st->count_passCredit;
+                RenderSummaryCard(5, "Section Credits (pass/want)",
+                    DS("%d / %d", sec_pass, sec_want),
+                    sec_pass >= sec_want ? C_GREEN : C_ACCENT);
+            }
 
             /* graduation status */
             CLAY(CLAY_ID("GradCard"), {
@@ -572,7 +608,7 @@ static void RenderMainContent(void)
                     CLAY_TEXT(CLAY_STRING("READY"), TC(C_GREEN, 20));
                 } else {
                     int eff = calc_effective_credits(&gPlayer);
-                    int req = calc_required_credits();
+                    int req = calc_required_credits(&gPlayer);
                     CLAY_TEXT(DS("%d/%d cr", eff, req), TC(C_RED, 18));
                     CLAY_TEXT(CLAY_STRING("Not ready"), TC(C_SUBTEXT, 10));
                 }
@@ -613,6 +649,28 @@ static void RenderMainContent(void)
                        alert_label[gPlayer.status_alert],
                        gPlayer.ToTal_credit_npass),
                     TC(alert_fg[gPlayer.status_alert], 11));
+            }
+        }
+
+        /* ── Data-file validation warnings (from DB_ValidateData) ── */
+        if (gDataWarnCount > 0) {
+            CLAY(CLAY_ID("DataWarnBanner"), {
+                .layout = {
+                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                    .padding         = { 14, 14, 8, 8 },
+                    .childGap        = 4,
+                    .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                },
+                .backgroundColor = C_RED_BG,
+                .cornerRadius    = CLAY_CORNER_RADIUS(6),
+                .border          = { .color = C_RED, .width = { .left = 3 } },
+            }) {
+                CLAY_TEXT(CLAY_STRING("Data file validation errors:"), TC(C_RED, 11));
+                const char *_w = gDataWarningsBuf;
+                for (int _k = 0; _k < gDataWarnCount; _k++) {
+                    CLAY_TEXT(DS("  * %s", _w), TC(C_WHITE, 11));
+                    _w += strlen(_w) + 1;
+                }
             }
         }
 
@@ -906,7 +964,7 @@ static void RenderCommandPopup(void)
                 CLAY_TEXT(cursorOn ? DS("%s|", gCmdBuf) : DS("%s ", gCmdBuf),
                           TC(C_TEXT, 14));
             } else {
-                CLAY_TEXT(CLAY_STRING("type <0-11>  |  score <CODE> <mid> <fin>  |  clear <CODE>  |  logout"),
+                CLAY_TEXT(CLAY_STRING("please type \"help\" to see all command"),
                           TC(C_SUBTEXT, 13));
             }
         }

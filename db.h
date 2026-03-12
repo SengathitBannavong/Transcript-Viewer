@@ -18,6 +18,8 @@
  *   DB_Exists(username)        — check if db_<username>.db exists
  *   DB_Open(username)          — open (create new or reopen existing)
  *   DB_SeedFromDat()           — seed from assets/subjects.dat (new DB only)
+ *   DB_SeedGradRules()         — seed grad_rules from assets/grad_config.cfg
+ *   DB_LoadGradRules()         — fill gGradRules[] from DB (call after schema)
  *   DB_LoadScores()            — load from assets/tablejerry.txt (optional import)
  *   DB_Query(player)           — fill *player from DB
  *   DB_Close()                 — close handle
@@ -135,6 +137,14 @@ void DB_CreateSchema(void)
         "  final        REAL    NOT NULL DEFAULT 0.0,"
         "  pass         INTEGER NOT NULL DEFAULT 0,"
         "  ever_studied INTEGER NOT NULL DEFAULT 0"
+        ");"
+    );
+    db_exec(
+        "CREATE TABLE IF NOT EXISTS grad_rules("
+        "  type_id   INTEGER PRIMARY KEY,"
+        "  mode      INTEGER NOT NULL DEFAULT 0,"
+        "  limit_val INTEGER NOT NULL DEFAULT 0,"
+        "  group_id  INTEGER NOT NULL DEFAULT 0"
         ");"
     );
 }
@@ -302,8 +312,264 @@ void DB_LoadScores_Test(void)
     fclose(f);
 }
 
-/* ─────────────────────────────────────────────────────────────────────
- * DB_Query — populate *player from the database
+/* ───────────────────────────────────────────────────────────────────── * DB_SeedGradRules — parse assets/grad_config.cfg and insert into grad_rules.
+ *   Uses INSERT OR IGNORE, so safe to call on existing DBs.
+ *   Falls back to hardcoded defaults if the cfg file is missing.
+ *   Format per data line:  type_id  mode  limit_val  group_id
+ * ───────────────────────────────────────────────────────────────────────── */
+void DB_SeedGradRules(void)
+{
+    /* Fallback defaults matching the IT major layout (sizeSubjectType=14, IDs 1-13)
+     * Index 0 is the unused reserved slot. */
+    static const int def_mode [sizeSubjectType] = {
+        0,           /* [0] unused                  */
+        0,0,2,0,1,   /* [1-5]  fixed required types */
+        0,0,0,0,0,0, /* [6-11] module slots         */
+        0,0          /* [12-13] thuc_tap, do_an     */
+    };
+    static const int def_limit[sizeSubjectType] = {
+        0,
+        0,0,4,0,9,
+        0,0,0,0,0,0,
+        0,0
+    };
+    static const int def_group[sizeSubjectType] = {
+        0,
+        0,0,0,0,0,
+        1,1,1,2,2,0,
+        0,0
+    };
+
+    sqlite3_stmt *stmt = NULL;
+    sqlite3_prepare_v2(gDB,
+        "INSERT OR IGNORE INTO grad_rules(type_id,mode,limit_val,group_id)"
+        " VALUES(?,?,?,?);",
+        -1, &stmt, NULL);
+
+    FILE *f = fopen("assets/grad_config.cfg", "r");
+    db_exec("BEGIN;");
+    if (!f) {
+        /* no cfg — seed defaults */
+        for (int i = 0; i < sizeSubjectType; i++) {
+            sqlite3_bind_int(stmt, 1, i);
+            sqlite3_bind_int(stmt, 2, def_mode[i]);
+            sqlite3_bind_int(stmt, 3, def_limit[i]);
+            sqlite3_bind_int(stmt, 4, def_group[i]);
+            sqlite3_step(stmt);
+            sqlite3_reset(stmt);
+        }
+    } else {
+        char line[256];
+        while (fgets(line, sizeof(line), f)) {
+            int len = (int)strlen(line);
+            while (len > 0 && (line[len-1]=='\n'||line[len-1]=='\r')) line[--len]='\0';
+            /* skip leading whitespace, then comments and blanks */
+            int si = 0;
+            while (line[si]==' '||line[si]=='\t') si++;
+            if (line[si]=='#' || line[si]=='\0') continue;
+            int type_id=0, mode=0, limit_val=0, group_id=0;
+            if (sscanf(line+si, "%d %d %d %d",
+                       &type_id, &mode, &limit_val, &group_id) < 2) continue;
+            if (type_id < 0 || type_id >= sizeSubjectType) continue;
+            sqlite3_bind_int(stmt, 1, type_id);
+            sqlite3_bind_int(stmt, 2, mode);
+            sqlite3_bind_int(stmt, 3, limit_val);
+            sqlite3_bind_int(stmt, 4, group_id);
+            sqlite3_step(stmt);
+            sqlite3_reset(stmt);
+        }
+        fclose(f);
+    }
+    db_exec("COMMIT;");
+    sqlite3_finalize(stmt);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * DB_LoadGradRules — read grad_rules table into gGradRules[].
+ *   Call after DB_CreateSchema() (and DB_SeedGradRules()) on every DB open.
+ * ───────────────────────────────────────────────────────────────────────── */
+void DB_LoadGradRules(void)
+{
+    memset(gGradRules, 0, sizeof(gGradRules));
+    sqlite3_stmt *stmt = NULL;
+    sqlite3_prepare_v2(gDB,
+        "SELECT type_id, mode, limit_val, group_id FROM grad_rules;",
+        -1, &stmt, NULL);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        int tid = sqlite3_column_int(stmt, 0);
+        if (tid < 0 || tid >= sizeSubjectType) continue;
+        gGradRules[tid].mode      = sqlite3_column_int(stmt, 1);
+        gGradRules[tid].limit_val = sqlite3_column_int(stmt, 2);
+        gGradRules[tid].group_id  = sqlite3_column_int(stmt, 3);
+    }
+    sqlite3_finalize(stmt);
+}
+
+/* forward declaration — defined later in this file */
+void DB_ValidateData(void);
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * DB_ReloadData — full wipe-and-reseed of subject + rule tables.
+ *
+ *   Strategy (preserves existing scores):
+ *     1. Snapshot current scores to a temp table keyed by subject code.
+ *     2. DELETE all rows from subject_scores, subjects, subject_types,
+ *        grad_rules — tables are now empty.
+ *     3. Run DB_SeedFromDat() and DB_SeedGradRules() as if it were a
+ *        brand-new DB.  Every row is inserted fresh from the asset files.
+ *     4. Restore saved scores into the newly created subject_scores rows
+ *        (matched by subject code).  Subjects that were removed from
+ *        subjects.dat simply lose their snapshot — they no longer exist.
+ *     5. Reload in-RAM state: gTypeName[], gGradRules[], gDataWarnings.
+ *
+ *   Net effect: the DB always exactly mirrors the asset files after a
+ *   reload, with no stale/orphaned rows, while retaining every grade the
+ *   user has recorded.
+ * ───────────────────────────────────────────────────────────────────────── */
+void DB_ReloadData(void)
+{
+    /* ── 1. Snapshot scores by subject code ─────────────────────────── */
+    db_exec(
+        "CREATE TEMP TABLE IF NOT EXISTS _reload_scores("
+        "  code         TEXT PRIMARY KEY,"
+        "  score_letter TEXT,"
+        "  mid          REAL,"
+        "  final        REAL,"
+        "  pass         INTEGER,"
+        "  ever_studied INTEGER"
+        ");"
+    );
+    db_exec("DELETE FROM _reload_scores;");
+    db_exec(
+        "INSERT INTO _reload_scores "
+        "SELECT s.code, sc.score_letter, sc.mid, sc.final, sc.pass, sc.ever_studied "
+        "  FROM subjects s JOIN subject_scores sc ON sc.subject_id = s.id;"
+    );
+
+    /* ── 2. Wipe all data tables ─────────────────────────────────────── */
+    db_exec("DELETE FROM subject_scores;");
+    db_exec("DELETE FROM subjects;");
+    db_exec("DELETE FROM subject_types;");
+    db_exec("DELETE FROM grad_rules;");
+
+    /* ── 3. Re-seed fresh from asset files ───────────────────────────── */
+    DB_SeedFromDat();
+    DB_SeedGradRules();
+
+    /* ── 4. Restore saved scores onto the freshly seeded subjects ────── */
+    {
+        sqlite3_stmt *sel = NULL, *upd = NULL;
+        sqlite3_prepare_v2(gDB,
+            "SELECT code, score_letter, mid, final, pass, ever_studied"
+            "  FROM _reload_scores;",
+            -1, &sel, NULL);
+        sqlite3_prepare_v2(gDB,
+            "UPDATE subject_scores"
+            "  SET score_letter=?, mid=?, final=?, pass=?, ever_studied=?"
+            "  WHERE subject_id=(SELECT id FROM subjects WHERE code=?);",
+            -1, &upd, NULL);
+        db_exec("BEGIN;");
+        while (sqlite3_step(sel) == SQLITE_ROW) {
+            const char *code = (const char*)sqlite3_column_text(sel, 0);
+            const char *ltr  = (const char*)sqlite3_column_text(sel, 1);
+            double      mid  = sqlite3_column_double(sel, 2);
+            double      fin  = sqlite3_column_double(sel, 3);
+            int         pass = sqlite3_column_int  (sel, 4);
+            int         ever = sqlite3_column_int  (sel, 5);
+            /* skip subjects that were never studied — keep fresh default */
+            if (ever == 0 && pass == 0 && (!ltr || strcmp(ltr, "X") == 0)) continue;
+            sqlite3_bind_text  (upd, 1, ltr,  -1, SQLITE_TRANSIENT);
+            sqlite3_bind_double(upd, 2, mid);
+            sqlite3_bind_double(upd, 3, fin);
+            sqlite3_bind_int   (upd, 4, pass);
+            sqlite3_bind_int   (upd, 5, ever);
+            sqlite3_bind_text  (upd, 6, code, -1, SQLITE_TRANSIENT);
+            sqlite3_step(upd);
+            sqlite3_reset(upd);
+        }
+        db_exec("COMMIT;");
+        sqlite3_finalize(sel);
+        sqlite3_finalize(upd);
+    }
+    db_exec("DROP TABLE IF EXISTS _reload_scores;");
+
+    /* ── 5. Refresh in-RAM state ─────────────────────────────────────── */
+    memset(gTypeName, 0, sizeof(gTypeName));
+    DB_LoadGradRules();
+    DB_ValidateData();
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * DB_ValidateData — cross-check subjects.dat vs grad_config.cfg.
+ *   Checks:  1. All required IDs {1,2,3,4,5,12,13} exist in subject_types.
+ *            2. All required IDs exist in grad_rules.
+ *            3. Every ID in grad_rules also exists in subject_types.
+ *            4. Every ID in subject_types also exists in grad_rules.
+ *   Results are packed as NUL-terminated strings into gDataWarningsBuf.
+ *   gDataWarnCount is set to the number of warnings (0 = all OK).
+ * ───────────────────────────────────────────────────────────────────────── */
+void DB_ValidateData(void)
+{
+    static const int required[] = {1, 2, 3, 4, 5, 12, 13};
+    static const int nreq = (int)(sizeof(required) / sizeof(required[0]));
+    static const char *req_names[] = {
+        "co_so_nganh", "dai_cuong", "the_thao",
+        "ly_luat_chinh_tri", "tu_chon", "thuc_tap", "do_an_tot_nghiep"
+    };
+
+    memset(gDataWarningsBuf, 0, sizeof(gDataWarningsBuf));
+    gDataWarnCount = 0;
+    int pos = 0;
+
+#define _DV_WARN(fmt, ...) do { \
+    int _n = snprintf(gDataWarningsBuf + pos, DATA_WARN_BUF - pos - 1, fmt, ##__VA_ARGS__); \
+    if (_n > 0 && pos + _n < DATA_WARN_BUF - 1) { pos += _n + 1; gDataWarnCount++; } \
+} while(0)
+
+    int in_types[sizeSubjectType], in_rules[sizeSubjectType];
+    memset(in_types, 0, sizeof(in_types));
+    memset(in_rules, 0, sizeof(in_rules));
+
+    sqlite3_stmt *st = NULL;
+    sqlite3_prepare_v2(gDB, "SELECT id FROM subject_types;", -1, &st, NULL);
+    while (sqlite3_step(st) == SQLITE_ROW) {
+        int id = sqlite3_column_int(st, 0);
+        if (id > 0 && id < sizeSubjectType) in_types[id] = 1;
+    }
+    sqlite3_finalize(st);
+
+    sqlite3_prepare_v2(gDB, "SELECT type_id FROM grad_rules;", -1, &st, NULL);
+    while (sqlite3_step(st) == SQLITE_ROW) {
+        int id = sqlite3_column_int(st, 0);
+        if (id > 0 && id < sizeSubjectType) in_rules[id] = 1;
+    }
+    sqlite3_finalize(st);
+
+    /* 1+2. Required IDs must exist in both tables */
+    for (int k = 0; k < nreq; k++) {
+        int id = required[k];
+        if (!in_types[id])
+            _DV_WARN("subjects.dat: missing required section [%d] (%s)", id, req_names[k]);
+        if (!in_rules[id])
+            _DV_WARN("grad_config.cfg: missing required entry for id %d (%s)", id, req_names[k]);
+    }
+
+    /* 3. grad_rules has a rule for a type not in subject_types */
+    for (int i = 1; i < sizeSubjectType; i++) {
+        if (in_rules[i] && !in_types[i])
+            _DV_WARN("grad_config.cfg id %d has no matching section in subjects.dat", i);
+    }
+
+    /* 4. subject_types has a type not covered by grad_rules */
+    for (int i = 1; i < sizeSubjectType; i++) {
+        if (in_types[i] && !in_rules[i])
+            _DV_WARN("subjects.dat [%d] has no matching rule in grad_config.cfg", i);
+    }
+
+#undef _DV_WARN
+}
+
+/* ───────────────────────────────────────────────────────────────────────── * DB_Query — populate *player from the database
  * ───────────────────────────────────────────────────────────────────── */
 void DB_Query(Player *player)
 {

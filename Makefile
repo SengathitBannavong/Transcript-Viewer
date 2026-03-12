@@ -5,9 +5,20 @@ LDFLAGS = $(RAYLIB)/lib/libraylib.a -lGL -lm -lpthread -ldl -lX11 -lXrandr -lXi 
 TARGET  = ./bin/program
 SRC     = main.c
 
-.PHONY: all clean setup
+TEST_TARGET = ./bin/test_logic
+TEST_SRC    = test_logic.c
+TEST_CFLAGS = -O0 -g -Wall -Wno-missing-braces
+TEST_LDFLAGS = -lsqlite3 -lm
+
+.PHONY: all clean setup test
 
 all: setup $(TARGET)
+
+test: $(TEST_TARGET)
+	$(TEST_TARGET)
+
+$(TEST_TARGET): $(TEST_SRC) app_data.h db.h score_logic.h struct_table.h
+	$(CC) $(TEST_CFLAGS) $(TEST_SRC) -o $(TEST_TARGET) $(TEST_LDFLAGS)
 
 setup:
 	@if [ ! -f clay.h ]; then \
