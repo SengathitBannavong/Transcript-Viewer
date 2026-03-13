@@ -11,6 +11,8 @@
  *   clear <CODE>                      Reset a subject score back to X / 0.0
  *   cpa                               Show overall CPA (all studied + pass only)
  *   logout                            Close DB and return to the name-input screen
+ *   filter <text>|pass|fail|noscore|clear  Apply table filters
+ *   settings                          Open asset-path settings popup
  *   help                              Show available commands in the toast
  */
 
@@ -54,7 +56,7 @@ static inline void ExecuteCommand(const char *input,
 
     if (argc < 2) {
         snprintf(out_msg, msg_size,
-                 "type <1-13>  |  score <CODE> <mid> <fin>  |  clear <CODE>  |  reload  |  help");
+                 "type <0-13> | score <CODE> <mid> <fin> | clear <CODE> | filter <...> | settings");
         return;
     }
 
@@ -63,7 +65,67 @@ static inline void ExecuteCommand(const char *input,
     /* ── help ── */
     if (strcmp(verb, "help") == 0) {
         snprintf(out_msg, msg_size,
-                 "type 1-13  |  score <CODE> <mid> <fin> [ratio 1-3]  |  clear <CODE>  |  cpa  |  reload  |  logout");
+                 "type 0-13 | score <CODE> <mid> <fin> [ratio] | clear <CODE> | filter <text|pass|fail|noscore|clear> | settings | cpa | reload | logout");
+        return;
+    }
+
+    /* ── settings ── */
+    if (strcmp(verb, "settings") == 0) {
+        open_settings_popup();
+        snprintf(out_msg, msg_size, "Opened settings popup");
+        return;
+    }
+
+    /* ── filter <mode|text> ── */
+    if (strcmp(verb, "filter") == 0) {
+        if (argc < 3) {
+            snprintf(out_msg, msg_size,
+                     "filter: usage filter <text|pass|fail|noscore|clear>");
+            return;
+        }
+        if (strcmp(argv[2], "clear") == 0) {
+            gTableFilterQuery[0] = '\0';
+            gTableFilterLen = 0;
+            gTableFilterMode = 0;
+            snprintf(out_msg, msg_size, "Filter cleared");
+            return;
+        }
+        if (strcmp(argv[2], "pass") == 0) {
+            gTableFilterMode = 1;
+            snprintf(out_msg, msg_size, "Filter mode: pass");
+            return;
+        }
+        if (strcmp(argv[2], "fail") == 0) {
+            gTableFilterMode = 2;
+            snprintf(out_msg, msg_size, "Filter mode: fail");
+            return;
+        }
+        if (strcmp(argv[2], "noscore") == 0) {
+            gTableFilterMode = 3;
+            snprintf(out_msg, msg_size, "Filter mode: no-score");
+            return;
+        }
+        if (strcmp(argv[2], "all") == 0) {
+            gTableFilterMode = 0;
+            snprintf(out_msg, msg_size, "Filter mode: all");
+            return;
+        }
+
+        /* treat everything after 'filter' as free text */
+        char joined[sizeof(gTableFilterQuery)] = {0};
+        int pos = 0;
+        for (int i = 2; i < argc; i++) {
+            int left = (int)sizeof(joined) - pos - 1;
+            if (left <= 0) break;
+            int n = snprintf(joined + pos, (size_t)left, "%s%s",
+                             i == 2 ? "" : " ", argv[i]);
+            if (n <= 0) break;
+            if (n >= left) { pos = (int)sizeof(joined) - 1; break; }
+            pos += n;
+        }
+        snprintf(gTableFilterQuery, sizeof(gTableFilterQuery), "%s", joined);
+        gTableFilterLen = (int)strlen(gTableFilterQuery);
+        snprintf(out_msg, msg_size, "Filter text: %s", gTableFilterQuery);
         return;
     }
 
@@ -178,5 +240,5 @@ static inline void ExecuteCommand(const char *input,
 
     /* ── unknown ── */
     snprintf(out_msg, msg_size,
-             "Unknown command '%s'  try: type | score | clear | logout | help", verb);
+             "Unknown command '%s'  try: type | score | clear | filter | settings | logout | help", verb);
 }

@@ -159,8 +159,8 @@ void DB_CreateSchema(void)
 void DB_SeedFromDat(void)
 {
     /* open subjects.dat — type names are read from [N] headers inline */
-    FILE *f = fopen("assets/subjects.dat", "r");
-    if (!f) { fprintf(stderr,"[db] Cannot open assets/subjects.dat\n"); return; }
+    FILE *f = fopen(gSubjectsDatPath, "r");
+    if (!f) { fprintf(stderr,"[db] Cannot open %s\n", gSubjectsDatPath); return; }
 
     sqlite3_stmt *stType = NULL;
     sqlite3_prepare_v2(gDB,
@@ -346,7 +346,7 @@ void DB_SeedGradRules(void)
         " VALUES(?,?,?,?);",
         -1, &stmt, NULL);
 
-    FILE *f = fopen("assets/grad_config.cfg", "r");
+    FILE *f = fopen(gGradCfgPath, "r");
     db_exec("BEGIN;");
     if (!f) {
         /* no cfg — seed defaults */

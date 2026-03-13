@@ -22,6 +22,7 @@ When the program launches, a **name-input screen** appears.
 | Key | Action |
 |-----|--------|
 | `Ctrl + K` | Open / close the Command Palette |
+| `Ctrl + ,` | Open Asset Paths settings popup |
 
 ---
 
@@ -43,6 +44,12 @@ Open with **Ctrl + K**, then type a command and press **Enter**.
 | `type <N>` | `type 3` | Switch sidebar to subject-type N (0–11) |
 | `score <CODE> <mid> <fin>` | `score IT2000 7.5 8.0` | Set midterm and final scores for a subject (0.0–10.0); grade letter and pass/fail are recalculated automatically |
 | `clear <CODE>` | `clear IT2000` | Reset a subject score back to X / 0.0 |
+| `filter <text>` | `filter IT` | Filter current table rows by subject code/name text |
+| `filter pass` | `filter pass` | Show only passed subjects in current table |
+| `filter fail` | `filter fail` | Show only failed (studied but not pass) subjects |
+| `filter noscore` | `filter noscore` | Show only subjects with no score (`X`) |
+| `filter clear` | `filter clear` | Clear all table filters |
+| `settings` | `settings` | Open Asset Paths settings popup |
 | `logout` | `logout` | Close the current database and return to the name-input screen |
 | `help` | `help` | Show available commands in the result toast |
 
@@ -99,6 +106,26 @@ Open with **Ctrl + K**, then type a command and press **Enter**.
 | Key | Default | Description |
 |-----|---------|-------------|
 | `font_scale` | `1.8` | Multiplier for all font sizes. `1.0` = base, `1.4` = original, `1.8` = larger. Change and restart. |
+
+### Runtime path config
+
+Settings are now edited in-app as structured forms/tables (no path editing in UI).
+
+In **Ctrl + ,** settings popup:
+
+| Tab | Editor type | Editable fields |
+|-----|-------------|-----------------|
+| `ui.cfg` | Form | `font_scale`, `target_fps` |
+| `grad_config.cfg` | Table + row form | `mode`, `limit`, `group` per `type_id` row |
+| `subjects.dat` | Section table + row form | `code`, `term`, `credit`, `name` per subject row |
+
+Buttons:
+
+| Button | Effect |
+|--------|--------|
+| `Save` | Save current editor file |
+| `Save + Reload` | Save file and reload DB data immediately (`grad_config.cfg`, `subjects.dat`) |
+| `Cancel` | Close settings popup |
 
 ### `assets/fonts.cfg` format
 

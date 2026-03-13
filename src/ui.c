@@ -348,6 +348,43 @@ static Clay_Color score_color(const char *letter)
     return C_TEXT;  /* D+ or D */
 }
 
+static int str_icontains(const char *hay, const char *needle)
+{
+    if (!needle || !needle[0]) return 1;
+    if (!hay || !hay[0]) return 0;
+
+    int nlen = (int)strlen(needle);
+    for (int i = 0; hay[i]; i++) {
+        int j = 0;
+        while (j < nlen && hay[i + j]
+                && tolower((unsigned char)hay[i + j])
+                   == tolower((unsigned char)needle[j])) {
+            j++;
+        }
+        if (j == nlen) return 1;
+    }
+    return 0;
+}
+
+static bool subject_matches_filter(const Subject_Node *node)
+{
+    if (!node) return false;
+
+    if (gTableFilterMode == 1 && node->status_pass != 1) return false; /* pass */
+    if (gTableFilterMode == 2) { /* fail (studied but not pass) */
+        if (node->score_letter == 'X' || node->status_pass == 1) return false;
+    }
+    if (gTableFilterMode == 3 && node->score_letter != 'X') return false; /* no score */
+
+    if (gTableFilterLen > 0) {
+        if (!str_icontains(node->name, gTableFilterQuery)
+                && !str_icontains(node->ID, gTableFilterQuery))
+            return false;
+    }
+
+    return true;
+}
+
 static void RenderTableRow(Subject_Node *node, int idx)
 {
     bool isOdd = idx % 2 != 0;
@@ -517,6 +554,21 @@ static void RenderTableRow(Subject_Node *node, int idx)
 static void RenderMainContent(void)
 {
     Subject_Type *st = &gPlayer.numofSubjectType[gActiveNav];
+    bool hasFilter = (gTableFilterLen > 0 || gTableFilterMode != 0);
+
+    int filtered_subjects = 0;
+    int filtered_pass_subjects = 0;
+    int filtered_pass_credits = 0;
+    int filtered_total_credits = 0;
+    for (Subject_Node *scan = st->head; scan; scan = scan->next) {
+        if (!subject_matches_filter(scan)) continue;
+        filtered_subjects++;
+        filtered_total_credits += (int)scan->credit;
+        if (scan->status_pass == 1) {
+            filtered_pass_subjects++;
+            filtered_pass_credits += (int)scan->credit;
+        }
+    }
 
     CLAY(CLAY_ID("Main"), {
         .layout = {
@@ -568,6 +620,22 @@ static void RenderMainContent(void)
                                      .width = { .left=1,.right=1,.top=1,.bottom=1 } },
             }) {
                 CLAY_TEXT(CLAY_STRING("Ctrl+K  Command"), TC(C_SUBTEXT, 11));
+            }
+
+            CLAY(CLAY_ID("SettingsHint"), {
+                .layout = {
+                    .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(30) },
+                    .padding        = { 12, 12, 0, 0 },
+                    .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                },
+                .backgroundColor = Clay_Hovered() ? C_ROW_HOVER : C_CARD,
+                .cornerRadius    = CLAY_CORNER_RADIUS(6),
+                .border          = { .color = C_BORDER,
+                                     .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+            }) {
+                if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
+                    open_settings_popup();
+                CLAY_TEXT(CLAY_STRING("Settings  Ctrl+,"), TC(C_SUBTEXT, 11));
             }
         }
 
@@ -635,6 +703,90 @@ static void RenderMainContent(void)
                     CLAY_TEXT(DS("%d/%d cr", eff, req), TC(C_RED, 18));
                     CLAY_TEXT(CLAY_STRING("Not ready"), TC(C_SUBTEXT, 10));
                 }
+            }
+        }
+
+        /* ── Filter bar ── */
+        CLAY(CLAY_ID("FilterBar"), {
+            .layout = {
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(42) },
+                .padding         = { 12, 12, 0, 0 },
+                .childGap        = 8,
+                .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                .layoutDirection = CLAY_LEFT_TO_RIGHT,
+            },
+            .backgroundColor = C_CARD,
+            .cornerRadius    = CLAY_CORNER_RADIUS(7),
+            .border          = { .color = C_BORDER,
+                                 .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+        }) {
+            CLAY(CLAY_ID("FilterInput"), {
+                .layout = {
+                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(30) },
+                    .padding         = { 10, 10, 0, 0 },
+                    .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                    .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                },
+                .backgroundColor = gFilterInputFocus ? C_ACCENT_BG : C_TBL_HDR,
+                .cornerRadius    = CLAY_CORNER_RADIUS(5),
+                .border          = { .color = gFilterInputFocus ? C_ACCENT : C_BORDER,
+                                     .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+            }) {
+                if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
+                    gFilterInputFocus = true;
+                bool cursorOn = ((int)(GetTime() * 2) % 2) == 0;
+                if (gTableFilterLen > 0) {
+                    CLAY_TEXT(gFilterInputFocus && cursorOn
+                                ? DS("%s|", gTableFilterQuery)
+                                : DS("%s ", gTableFilterQuery),
+                              TC(C_TEXT, 11));
+                } else {
+                    CLAY_TEXT(gFilterInputFocus && cursorOn
+                                ? CLAY_STRING("search subject/id|")
+                                : CLAY_STRING("search subject/id"),
+                              TC(C_SUBTEXT, 11));
+                }
+            }
+
+#define FILTER_CHIP(cid, modev, lbl) \
+            CLAY(CLAY_ID(cid), { \
+                .layout = { \
+                    .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(28) }, \
+                    .padding        = { 10, 10, 0, 0 }, \
+                    .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER }, \
+                }, \
+                .backgroundColor = gTableFilterMode == (modev) ? C_ACCENT : (Clay_Hovered() ? C_ROW_HOVER : C_BORDER), \
+                .cornerRadius    = CLAY_CORNER_RADIUS(6), \
+            }) { \
+                if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) { \
+                    gTableFilterMode = (modev); \
+                    gFilterInputFocus = false; \
+                } \
+                CLAY_TEXT(CLAY_STRING(lbl), TC(gTableFilterMode == (modev) ? C_WHITE : C_TEXT, 10)); \
+            }
+
+            FILTER_CHIP("FilterAll", 0, "All")
+            FILTER_CHIP("FilterPass", 1, "Pass")
+            FILTER_CHIP("FilterFail", 2, "Fail")
+            FILTER_CHIP("FilterNoScore", 3, "No Score")
+#undef FILTER_CHIP
+
+            CLAY(CLAY_ID("FilterClear"), {
+                .layout = {
+                    .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(28) },
+                    .padding        = { 10, 10, 0, 0 },
+                    .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+                },
+                .backgroundColor = Clay_Hovered() ? C_RED : C_RED_BG,
+                .cornerRadius    = CLAY_CORNER_RADIUS(6),
+            }) {
+                if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                    gTableFilterQuery[0] = '\0';
+                    gTableFilterLen = 0;
+                    gTableFilterMode = 0;
+                    gFilterInputFocus = false;
+                }
+                CLAY_TEXT(CLAY_STRING("Clear"), TC(C_WHITE, 10));
             }
         }
 
@@ -721,7 +873,8 @@ static void RenderMainContent(void)
                 Subject_Node *node = st->head;
                 int i = 0;
                 while (node) {
-                    RenderTableRow(node, i++);
+                    if (subject_matches_filter(node))
+                        RenderTableRow(node, i++);
                     node = node->next;
                 }
                 if (i == 0) {
@@ -752,11 +905,12 @@ static void RenderMainContent(void)
                 .border          = { .color = C_BORDER, .width = { .top = 1 } },
             }) {
                 CLAY_TEXT(
-                    DS("Showing %d subjects  |  %d passed  |  %d/%d credits  |  CPA %.2f",
-                       st->Total_Subject,
-                       st->count_passSubject,
-                       st->count_passCredit,
-                       st->Total_Credit,
+                          DS("Showing %d%s  |  %d passed  |  %d/%d credits  |  CPA %.2f",
+                              filtered_subjects,
+                              hasFilter ? " filtered" : " subjects",
+                              filtered_pass_subjects,
+                              filtered_pass_credits,
+                              filtered_total_credits,
                        calc_cpa_type(&gPlayer, gActiveNav, 0)),
                     TC(C_SUBTEXT, 10));
 
@@ -767,6 +921,437 @@ static void RenderMainContent(void)
                 CLAY_TEXT(
                     DS("Total passed credits: %d", gPlayer.ToTal_credit_pass),
                     TC(C_ACCENT, 10));
+            }
+        }
+    }
+}
+
+static void RenderSettingsPopup(void)
+{
+    CLAY(CLAY_ID("SettingsBackdrop"), {
+        .layout = {
+            .sizing = { CLAY_SIZING_FIXED((float)gScreenW),
+                        CLAY_SIZING_FIXED((float)gScreenH) },
+        },
+        .backgroundColor = (Clay_Color){ 0, 0, 0, 165 },
+        .floating = {
+            .attachTo = CLAY_ATTACH_TO_ROOT,
+            .zIndex = 16,
+        },
+    }) {}
+
+    CLAY(CLAY_ID("SettingsCard"), {
+        .layout = {
+            .sizing          = { CLAY_SIZING_FIXED(980), CLAY_SIZING_FIT(0) },
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            .childGap        = 0,
+        },
+        .backgroundColor = C_CARD,
+        .cornerRadius    = CLAY_CORNER_RADIUS(12),
+        .border          = { .color = C_ACCENT,
+                             .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+        .floating = {
+            .attachTo     = CLAY_ATTACH_TO_ROOT,
+            .attachPoints = { .element = CLAY_ATTACH_POINT_CENTER_CENTER,
+                              .parent = CLAY_ATTACH_POINT_CENTER_CENTER },
+            .zIndex       = 21,
+        },
+    }) {
+        CLAY(CLAY_ID("SettingsHdr"), {
+            .layout = {
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(52) },
+                .padding         = { 18, 18, 0, 0 },
+                .childGap        = 4,
+                .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            },
+            .backgroundColor = C_TBL_HDR,
+            .border          = { .color = C_BORDER, .width = { .bottom = 1 } },
+        }) {
+            CLAY_TEXT(CLAY_STRING("Settings"), TC(C_TEXT, 13));
+            CLAY_TEXT(CLAY_STRING("Edit ui.cfg, grad_config.cfg, subjects.dat values"), TC(C_SUBTEXT, 10));
+        }
+
+        CLAY(CLAY_ID("SettingsBody"), {
+            .layout = {
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .padding         = { 18, 18, 14, 14 },
+                .childGap        = 12,
+                .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            },
+        }) {
+            CLAY(CLAY_ID("SettingsTabs"), {
+                .layout = {
+                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                    .childGap        = 8,
+                    .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                    .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                },
+            }) {
+#define SETTINGS_FILE_TAB(cid, idx, lbl) \
+                CLAY(CLAY_ID(cid), { \
+                    .layout = { \
+                        .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(30) }, \
+                        .padding        = { 12, 12, 0, 0 }, \
+                        .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER }, \
+                    }, \
+                    .backgroundColor = gSettingsEditTarget == (idx) ? C_ACCENT : (Clay_Hovered() ? C_ROW_HOVER : C_BORDER), \
+                    .cornerRadius    = CLAY_CORNER_RADIUS(5), \
+                }) { \
+                    if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) { \
+                        gSettingsEditTarget = (idx); \
+                        gSettingsField = 0; \
+                        if ((idx) == 1 && gGradRowCount > 0) settings_select_grad_row(gGradSelected >= 0 ? gGradSelected : 0); \
+                    } \
+                    CLAY_TEXT(CLAY_STRING(lbl), TC(gSettingsEditTarget == (idx) ? C_WHITE : C_TEXT, 10)); \
+                }
+
+                SETTINGS_FILE_TAB("SettingsTabUi", 0, "ui.cfg")
+                SETTINGS_FILE_TAB("SettingsTabGrad", 1, "grad_config.cfg")
+                SETTINGS_FILE_TAB("SettingsTabDat", 2, "subjects.dat")
+#undef SETTINGS_FILE_TAB
+            }
+
+            if (gSettingsEditTarget == 0) {
+                CLAY(CLAY_ID("UiCfgForm"), {
+                    .layout = {
+                        .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                        .childGap        = 10,
+                        .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                    },
+                }) {
+                    CLAY_TEXT(CLAY_STRING("font_scale (0.1 - 10.0)"), TC(C_SUBTEXT, 10));
+                    CLAY(CLAY_ID("UiScaleInput"), {
+                        .layout = {
+                            .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(36) },
+                            .padding = { 10, 10, 0, 0 },
+                            .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                        },
+                        .backgroundColor = gSettingsField == 0 ? C_ACCENT_BG : C_TBL_HDR,
+                        .cornerRadius = CLAY_CORNER_RADIUS(6),
+                        .border = { .color = gSettingsField == 0 ? C_ACCENT : C_BORDER,
+                                    .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+                    }) {
+                        if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) gSettingsField = 0;
+                        CLAY_TEXT(DS("%s%s", gUiScaleBuf, gSettingsField == 0 && ((int)(GetTime()*2)%2)==0 ? "|" : ""), TC(C_TEXT, 11));
+                    }
+
+                    CLAY_TEXT(CLAY_STRING("target_fps (60 - 240)"), TC(C_SUBTEXT, 10));
+                    CLAY(CLAY_ID("UiFpsInput"), {
+                        .layout = {
+                            .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(36) },
+                            .padding = { 10, 10, 0, 0 },
+                            .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                        },
+                        .backgroundColor = gSettingsField == 1 ? C_ACCENT_BG : C_TBL_HDR,
+                        .cornerRadius = CLAY_CORNER_RADIUS(6),
+                        .border = { .color = gSettingsField == 1 ? C_ACCENT : C_BORDER,
+                                    .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+                    }) {
+                        if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) gSettingsField = 1;
+                        CLAY_TEXT(DS("%s%s", gUiFpsBuf, gSettingsField == 1 && ((int)(GetTime()*2)%2)==0 ? "|" : ""), TC(C_TEXT, 11));
+                    }
+                }
+            } else if (gSettingsEditTarget == 1) {
+                CLAY_TEXT(CLAY_STRING("grad_config table (click a row to edit mode/limit/group)"), TC(C_SUBTEXT, 10));
+                CLAY(CLAY_ID("GradTable"), {
+                    .layout = {
+                        .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(450) },
+                        .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                    },
+                    .backgroundColor = C_TBL_HDR,
+                    .cornerRadius = CLAY_CORNER_RADIUS(6),
+                    .border = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+                    .clip = { .vertical = true, .childOffset = Clay_GetScrollOffset() },
+                }) {
+                    for (int i = 0; i < gGradRowCount; i++) {
+                        CLAY(CLAY_IDI("GradRow", i), {
+                            .layout = {
+                                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(30) },
+                                .padding = { 8, 8, 0, 0 },
+                                .childGap = 14,
+                                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                                .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                            },
+                            .backgroundColor = i == gGradSelected ? C_ACCENT_BG : (Clay_Hovered() ? C_ROW_HOVER : C_TRANS),
+                            .border = { .color = C_BORDER, .width = { .bottom = 1 } },
+                        }) {
+                            if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) settings_select_grad_row(i);
+                            CLAY_TEXT(DS("[%d] %s", gGradRows[i].type_id, type_name_for_id(gGradRows[i].type_id)), TC(C_TEXT, 10));
+                            CLAY_TEXT(DS("mode=%d", gGradRows[i].mode), TC(C_TEXT, 10));
+                            CLAY_TEXT(DS("limit=%d", gGradRows[i].limit), TC(C_TEXT, 10));
+                            CLAY_TEXT(DS("group=%d", gGradRows[i].group_id), TC(C_TEXT, 10));
+                        }
+                    }
+                }
+
+                if (gGradSelected >= 0 && gGradSelected < gGradRowCount) {
+                    CLAY_TEXT(
+                        DS("Selected: [%d] %s",
+                           gGradRows[gGradSelected].type_id,
+                           type_name_for_id(gGradRows[gGradSelected].type_id)),
+                        TC(C_SUBTEXT, 10));
+                }
+
+                CLAY(CLAY_ID("GradEditRow"), {
+                    .layout = {
+                        .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                        .childGap = 8,
+                        .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                    },
+                }) {
+#define GRAD_INPUT(cid, fidx, label, val) \
+                    CLAY(CLAY_ID(cid), { \
+                        .layout = { .sizing = { CLAY_SIZING_PERCENT(0.33f), CLAY_SIZING_FIT(0) }, .childGap = 4, .layoutDirection = CLAY_TOP_TO_BOTTOM }, \
+                    }) { \
+                        CLAY_TEXT(CLAY_STRING(label), TC(C_SUBTEXT, 9)); \
+                        CLAY(CLAY_ID(cid "Box"), { \
+                            .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(34) }, .padding = { 10, 10, 0, 0 }, .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } }, \
+                            .backgroundColor = gSettingsField == (fidx) ? C_ACCENT_BG : C_TBL_HDR, \
+                            .cornerRadius = CLAY_CORNER_RADIUS(6), \
+                            .border = { .color = gSettingsField == (fidx) ? C_ACCENT : C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } }, \
+                        }) { \
+                            if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) gSettingsField = (fidx); \
+                            CLAY_TEXT(DS("%s%s", (val), gSettingsField == (fidx) && ((int)(GetTime()*2)%2)==0 ? "|" : ""), TC(C_TEXT, 10)); \
+                        } \
+                    }
+                    GRAD_INPUT("GradMode", 0, "mode", gGradModeBuf)
+                    GRAD_INPUT("GradLimit", 1, "limit", gGradLimitBuf)
+                    GRAD_INPUT("GradGroup", 2, "group", gGradGroupBuf)
+#undef GRAD_INPUT
+                }
+            } else if(gSettingsEditTarget == 2) {
+                CLAY_TEXT(CLAY_STRING("subjects table (choose section, click row, edit fields)"), TC(C_SUBTEXT, 10));
+
+                CLAY(CLAY_ID("SubSections"), {
+                    .layout = {
+                        .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                        .childGap = 6,
+                        .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                    },
+                }) {
+                    for (int t = 1; t < sizeSubjectType; t++) {
+                        bool has = false;
+                        for (int i = 0; i < gSubjectRowCount; i++) if (gSubjectRows[i].type_id == t) { has = true; break; }
+                        if (!has) continue;
+                        CLAY(CLAY_IDI("SecBtn", t), {
+                            .layout = {
+                                .sizing = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(24) },
+                                .padding = { 8, 8, 0, 0 },
+                                .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+                            },
+                            .backgroundColor = gSubjectSection == t ? C_ACCENT : (Clay_Hovered() ? C_ROW_HOVER : C_BORDER),
+                            .cornerRadius = CLAY_CORNER_RADIUS(5),
+                        }) {
+                            if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) gSubjectSection = t;
+                            CLAY_TEXT(DS("%d", t), TC(gSubjectSection == t ? C_WHITE : C_TEXT, 9));
+                        }
+                    }
+                }
+
+                CLAY(CLAY_ID("SubTable"), {
+                    .layout = {
+                        .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(450) },
+                        .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                    },
+                    .backgroundColor = C_TBL_HDR,
+                    .cornerRadius = CLAY_CORNER_RADIUS(6),
+                    .border = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+                    .clip = { .vertical = true, .childOffset = Clay_GetScrollOffset() },
+                }) {
+                    /* Virtualize rows to keep Clay element count bounded for large sections. */
+                    const int row_h = 30;
+                    const int table_h = 450;
+                    const int overscan = 4;
+
+                    int total_in_section = 0;
+                    for (int i = 0; i < gSubjectRowCount; i++) {
+                        if (gSubjectRows[i].type_id == gSubjectSection) total_in_section++;
+                    }
+
+                    int first_visible = 0;
+                    int render_count = total_in_section;
+                    if (total_in_section > 0) {
+                        Clay_Vector2 off = Clay_GetScrollOffset();
+                        int scrolled_rows = (int)((-off.y) / (float)row_h);
+                        int visible_rows = table_h / row_h + 1;
+
+                        if (scrolled_rows < 0) scrolled_rows = 0;
+                        first_visible = scrolled_rows - overscan;
+                        if (first_visible < 0) first_visible = 0;
+
+                        int last_visible = scrolled_rows + visible_rows + overscan;
+                        if (last_visible > total_in_section) last_visible = total_in_section;
+                        if (last_visible < first_visible) last_visible = first_visible;
+
+                        render_count = last_visible - first_visible;
+
+                        if (first_visible > 0) {
+                            CLAY(CLAY_ID("SubRowTopPad"), {
+                                .layout = {
+                                    .sizing = {
+                                        CLAY_SIZING_GROW(0),
+                                        CLAY_SIZING_FIXED((float)(first_visible * row_h))
+                                    },
+                                },
+                            }) {}
+                        }
+                    }
+
+                    int sec_idx = 0;
+                    int rendered = 0;
+                    for (int i = 0; i < gSubjectRowCount; i++) {
+                        if (gSubjectRows[i].type_id != gSubjectSection) continue;
+                        if (sec_idx < first_visible) { sec_idx++; continue; }
+                        if (rendered >= render_count) break;
+
+                        CLAY(CLAY_IDI("SubRow", i), {
+                            .layout = {
+                                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(30) },
+                                .padding = { 8, 8, 0, 0 },
+                                .childGap = 12,
+                                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                                .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                            },
+                            .backgroundColor = i == gSubjectSelected ? C_ACCENT_BG : (Clay_Hovered() ? C_ROW_HOVER : C_TRANS),
+                            .border = { .color = C_BORDER, .width = { .bottom = 1 } },
+                        }) {
+                            if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) settings_select_subject_row(i);
+                            CLAY_TEXT(CS(gSubjectRows[i].code), TC(C_ACCENT, 10));
+                            CLAY_TEXT(DS("T%d", gSubjectRows[i].term), TC(C_TEXT, 10));
+                            CLAY_TEXT(DS("C%d", gSubjectRows[i].credit), TC(C_TEXT, 10));
+                            CLAY_TEXT(CS(gSubjectRows[i].name), TC(C_TEXT, 10));
+                        }
+
+                        sec_idx++;
+                        rendered++;
+                    }
+
+                    if (total_in_section > 0) {
+                        int after_rows = total_in_section - (first_visible + render_count);
+                        if (after_rows > 0) {
+                            CLAY(CLAY_ID("SubRowBotPad"), {
+                                .layout = {
+                                    .sizing = {
+                                        CLAY_SIZING_GROW(0),
+                                        CLAY_SIZING_FIXED((float)(after_rows * row_h))
+                                    },
+                                },
+                            }) {}
+                        }
+                    }
+                }
+
+                CLAY(CLAY_ID("SubEdit"), {
+                    .layout = {
+                        .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                        .childGap = 8,
+                        .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                    },
+                }) {
+#define SUB_INPUT(cid, fidx, lbl, val, pct) \
+                    CLAY(CLAY_ID(cid), { \
+                        .layout = { .sizing = { CLAY_SIZING_PERCENT(pct), CLAY_SIZING_FIT(0) }, .childGap = 4, .layoutDirection = CLAY_TOP_TO_BOTTOM }, \
+                    }) { \
+                        CLAY_TEXT(CLAY_STRING(lbl), TC(C_SUBTEXT, 9)); \
+                        CLAY(CLAY_ID(cid "Box"), { \
+                            .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(34) }, .padding = { 10, 10, 0, 0 }, .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } }, \
+                            .backgroundColor = gSettingsField == (fidx) ? C_ACCENT_BG : C_TBL_HDR, \
+                            .cornerRadius = CLAY_CORNER_RADIUS(6), \
+                            .border = { .color = gSettingsField == (fidx) ? C_ACCENT : C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } }, \
+                        }) { \
+                            if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) gSettingsField = (fidx); \
+                            CLAY_TEXT(DS("%s%s", (val), gSettingsField == (fidx) && ((int)(GetTime()*2)%2)==0 ? "|" : ""), TC(C_TEXT, 10)); \
+                        } \
+                    }
+                    SUB_INPUT("SubCode", 0, "code", gSubCodeBuf, 0.18f)
+                    SUB_INPUT("SubTerm", 1, "term", gSubTermBuf, 0.12f)
+                    SUB_INPUT("SubCredit", 2, "credit", gSubCreditBuf, 0.14f)
+                    SUB_INPUT("SubName", 3, "name", gSubNameBuf, 0.56f)
+#undef SUB_INPUT
+                }
+            }
+
+            CLAY_TEXT(DS("Editing: %s", settings_target_path(gSettingsEditTarget)), TC(C_SUBTEXT, 9));
+        }
+
+        CLAY(CLAY_ID("SettingsFooter"), {
+            .layout = {
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(52) },
+                .padding         = { 18, 18, 0, 0 },
+                .childGap        = 10,
+                .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                .layoutDirection = CLAY_LEFT_TO_RIGHT,
+            },
+            .backgroundColor = C_TBL_HDR,
+            .border          = { .color = C_BORDER, .width = { .top = 1 } },
+        }) {
+            CLAY(CLAY_ID("SettingsSave"), {
+                .layout = {
+                    .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(34) },
+                    .padding        = { 16, 16, 6, 6 },
+                    .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+                },
+                .backgroundColor = Clay_Hovered() ? C_ACCENT : C_ACCENT_BG,
+                .cornerRadius    = CLAY_CORNER_RADIUS(6),
+            }) {
+                if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                    if (gSettingsEditTarget == 0)
+                        settings_save_ui_cfg(gResultMsg, (int)sizeof(gResultMsg));
+                    else if (gSettingsEditTarget == 1)
+                        settings_save_grad_cfg(gResultMsg, (int)sizeof(gResultMsg));
+                    else
+                        settings_save_subjects_dat(gResultMsg, (int)sizeof(gResultMsg));
+                    gHasResult = true;
+                    gResultShowUntil = (float)GetTime() + 5.f;
+                }
+                CLAY_TEXT(CLAY_STRING("Save"), TC(C_WHITE, 11));
+            }
+
+            CLAY(CLAY_ID("SettingsApplyReload"), {
+                .layout = {
+                    .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(34) },
+                    .padding        = { 16, 16, 6, 6 },
+                    .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+                },
+                .backgroundColor = Clay_Hovered() ? C_GREEN : C_GREEN_BG,
+                .cornerRadius    = CLAY_CORNER_RADIUS(6),
+            }) {
+                if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                    int ok = 0;
+                    if (gSettingsEditTarget == 0)
+                        ok = settings_save_ui_cfg(gResultMsg, (int)sizeof(gResultMsg));
+                    else if (gSettingsEditTarget == 1)
+                        ok = settings_save_grad_cfg(gResultMsg, (int)sizeof(gResultMsg));
+                    else
+                        ok = settings_save_subjects_dat(gResultMsg, (int)sizeof(gResultMsg));
+
+                    if (ok && gDBReady && gSettingsEditTarget != 0) {
+                        DB_ReloadData();
+                        RefreshPlayer();
+                        snprintf(gResultMsg, sizeof(gResultMsg), "Saved and reloaded data");
+                    }
+                    gHasResult = true;
+                    gResultShowUntil = (float)GetTime() + 5.f;
+                }
+                CLAY_TEXT(CLAY_STRING("Save + Reload"), TC(C_WHITE, 11));
+            }
+
+            CLAY(CLAY_ID("SettingsFootSp"), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(1) } },
+            }) {}
+
+            CLAY(CLAY_ID("SettingsCancel"), {
+                .layout = {
+                    .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(34) },
+                    .padding        = { 16, 16, 6, 6 },
+                    .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+                },
+                .backgroundColor = Clay_Hovered() ? C_ROW_HOVER : C_BORDER,
+                .cornerRadius    = CLAY_CORNER_RADIUS(6),
+            }) {
+                if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
+                    gSettingsOpen = false;
+                CLAY_TEXT(CLAY_STRING("Cancel"), TC(C_TEXT, 11));
             }
         }
     }
@@ -1470,123 +2055,69 @@ static void RenderEditPopup(void)
 
 static void RenderNameInput(void)
 {
-    /* full-screen background */
     CLAY(CLAY_ID("NIBackdrop"), {
         .layout = {
-            .sizing = { CLAY_SIZING_FIXED((float)gScreenW),
-                        CLAY_SIZING_FIXED((float)gScreenH) },
+            .sizing = { CLAY_SIZING_FIXED((float)gScreenW), CLAY_SIZING_FIXED((float)gScreenH) },
         },
         .backgroundColor = C_BG,
-        .floating = {
-            .attachTo = CLAY_ATTACH_TO_ROOT,
-            .zIndex   = 20,
-        },
+        .floating = { .attachTo = CLAY_ATTACH_TO_ROOT, .zIndex = 20 },
     }) {}
 
-    /* centered card */
     CLAY(CLAY_ID("NICard"), {
         .layout = {
-            .sizing          = { CLAY_SIZING_FIXED(480), CLAY_SIZING_FIT(0) },
+            .sizing = { CLAY_SIZING_FIXED(480), CLAY_SIZING_FIT(0) },
             .layoutDirection = CLAY_TOP_TO_BOTTOM,
-            .childGap        = 0,
+            .childGap = 10,
+            .padding = { 18, 18, 16, 16 },
         },
         .backgroundColor = C_CARD,
-        .cornerRadius    = CLAY_CORNER_RADIUS(12),
-        .border          = { .color = C_ACCENT,
-                             .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+        .cornerRadius = CLAY_CORNER_RADIUS(12),
+        .border = { .color = C_ACCENT, .width = { .left=1,.right=1,.top=1,.bottom=1 } },
         .floating = {
-            .attachTo     = CLAY_ATTACH_TO_ROOT,
-            .attachPoints = { .element = CLAY_ATTACH_POINT_CENTER_CENTER,
-                              .parent  = CLAY_ATTACH_POINT_CENTER_CENTER },
-            .zIndex       = 25,
+            .attachTo = CLAY_ATTACH_TO_ROOT,
+            .attachPoints = { .element = CLAY_ATTACH_POINT_CENTER_CENTER, .parent = CLAY_ATTACH_POINT_CENTER_CENTER },
+            .zIndex = 25,
         },
     }) {
-        /* header */
-        CLAY(CLAY_ID("NIHdr"), {
+        CLAY_TEXT(CLAY_STRING("Transcript Viewer"), TC(C_TEXT, 15));
+        CLAY_TEXT(CLAY_STRING("Enter your username to continue"), TC(C_SUBTEXT, 10));
+
+        CLAY_TEXT(CLAY_STRING("Username (max 25 chars)"), TC(C_SUBTEXT, 10));
+        CLAY(CLAY_ID("NIBox"), {
             .layout = {
-                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(66) },
-                .padding         = { 22, 22, 0, 0 },
-                .childGap        = 4,
-                .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
-                .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(40) },
+                .padding = { 12, 12, 0, 0 },
+                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
             },
-            .backgroundColor = C_TBL_HDR,
-            .border          = { .color = C_BORDER, .width = { .bottom = 1 } },
+            .backgroundColor = C_ACCENT_BG,
+            .cornerRadius = CLAY_CORNER_RADIUS(6),
+            .border = { .color = C_ACCENT, .width = { .left=1,.right=1,.top=1,.bottom=1 } },
         }) {
-            CLAY_TEXT(CLAY_STRING("Transcript Viewer"), TC(C_TEXT, 15));
-            CLAY_TEXT(CLAY_STRING("Enter your username to continue"),
-                      TC(C_SUBTEXT, 10));
+            bool cursorOn = ((int)(GetTime() * 2) % 2) == 0;
+            if (gNameLen > 0)
+                CLAY_TEXT(cursorOn ? DS("%s|", gUserName) : DS("%s ", gUserName), TC(C_TEXT, 13));
+            else
+                CLAY_TEXT(cursorOn ? CLAY_STRING("|") : CLAY_STRING(" "), TC(C_SUBTEXT, 13));
         }
 
-        /* label + input box */
-        CLAY(CLAY_ID("NIInputArea"), {
-            .layout = {
-                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
-                .padding         = { 22, 22, 14, 14 },
-                .childGap        = 8,
-                .layoutDirection = CLAY_TOP_TO_BOTTOM,
-            },
-        }) {
-            CLAY_TEXT(CLAY_STRING("Username  (max 25 chars)"), TC(C_SUBTEXT, 10));
-            CLAY(CLAY_ID("NIBox"), {
-                .layout = {
-                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(40) },
-                    .padding         = { 12, 12, 0, 0 },
-                    .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
-                    .layoutDirection = CLAY_LEFT_TO_RIGHT,
-                },
-                .backgroundColor = C_ACCENT_BG,
-                .cornerRadius    = CLAY_CORNER_RADIUS(6),
-                .border          = { .color = C_ACCENT,
-                                     .width = { .left=1,.right=1,.top=1,.bottom=1 } },
-            }) {
-                bool cursorOn = ((int)(GetTime() * 2) % 2) == 0;
-                if (gNameLen > 0)
-                    CLAY_TEXT(cursorOn ? DS("%s|", gUserName) : DS("%s ", gUserName),
-                              TC(C_TEXT, 13));
-                else
-                    CLAY_TEXT(cursorOn ? CLAY_STRING("|") : CLAY_STRING(" "),
-                              TC(C_SUBTEXT, 13));
-            }
+        if (gNameLen > 0) {
+            if (DB_Exists(gUserName))
+                CLAY_TEXT(DS("db_%s.db found | load existing", gUserName), TC(C_GREEN, 10));
+            else
+                CLAY_TEXT(DS("db_%s.db will be created", gUserName), TC(C_ACCENT, 10));
+        } else {
+            CLAY_TEXT(CLAY_STRING("Type username then press Enter"), TC(C_SUBTEXT, 10));
         }
 
-        /* status line */
-        CLAY(CLAY_ID("NIStatus"), {
+        CLAY(CLAY_ID("NIFooterRow"), {
             .layout = {
-                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(34) },
-                .padding         = { 22, 22, 0, 0 },
-                .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .childGap = 20,
                 .layoutDirection = CLAY_LEFT_TO_RIGHT,
             },
-            .border = { .color = C_BORDER, .width = { .top = 1 } },
         }) {
-            if (gNameLen > 0) {
-                if (DB_Exists(gUserName))
-                    CLAY_TEXT(DS("db_%s.db  found | load existing data", gUserName),
-                              TC(C_GREEN, 10));
-                else
-                    CLAY_TEXT(DS("db_%s.db  will be created", gUserName),
-                              TC(C_ACCENT, 10));
-            } else {
-                CLAY_TEXT(CLAY_STRING("Type your username and press Enter"),
-                          TC(C_SUBTEXT, 10));
-            }
-        }
-
-        /* footer */
-        CLAY(CLAY_ID("NIFooter"), {
-            .layout = {
-                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(36) },
-                .padding         = { 22, 22, 0, 0 },
-                .childGap        = 24,
-                .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
-                .layoutDirection = CLAY_LEFT_TO_RIGHT,
-            },
-            .backgroundColor = C_TBL_HDR,
-            .border          = { .color = C_BORDER, .width = { .top = 1 } },
-        }) {
-            CLAY_TEXT(CLAY_STRING("Enter  Confirm"), TC(C_SUBTEXT, 10));
-            CLAY_TEXT(CLAY_STRING("ESC  Quit"),      TC(C_SUBTEXT, 10));
+            CLAY_TEXT(CLAY_STRING("Enter Confirm"), TC(C_SUBTEXT, 10));
+            CLAY_TEXT(CLAY_STRING("ESC Quit"), TC(C_SUBTEXT, 10));
         }
     }
 }
