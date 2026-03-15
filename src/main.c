@@ -31,6 +31,8 @@
 #include <math.h>
 #include <ctype.h>
 
+#include "utf8_vn.c"
+
 /* --- Window constants ------------------------------------------------- */
 #define WIN_W  1400
 #define WIN_H   820
@@ -142,9 +144,596 @@ static char  gFontsCfgPath[512] = "assets/fonts.cfg";
 static char  gGradCfgPath[512] = "assets/grad_config.cfg";
 static const char *kAssetPathConfigFile = "assets_path.cfg";
 
+/* startup import overlay (CTT-SIS curriculum table) */
+#define IMPORT_RAW_MAX       262144
+#define IMPORT_TYPES_MAX     32
+#define IMPORT_ROWS_MAX      2048
+#define IMPORT_SUMMARY_LINES 32
+
+typedef struct {
+    int  type_id;
+    char type_name[64];
+    char code[MAXSIZEID];
+    int  term;
+    int  credit;
+    char name[MAXSIZENAME];
+    int  studied;
+    int  pass;
+    char letter[4];
+    float score_num;
+} ImportSubjectRow;
+
+typedef struct {
+    int type_id;
+    int expected_count;
+    int expected_total_credit;
+    int expected_pass_credit;
+    int parsed_count;
+    char display_name[96];
+} ImportTypeSummary;
+
+static bool gImportOpen = false;
+static int  gImportStage = 0; /* 0=paste+parse, 1=review+confirm, 2=enter username */
+static bool gImportPasted = false;
+static bool gImportLastSuccess = false;
+static int  gImportStatusKind = 0; /* -1 error, 0 neutral, 1 success */
+static char gImportRaw[IMPORT_RAW_MAX] = {0};
+static int  gImportRawLen = 0;
+static char gImportStatusMsg[512] = "Press Ctrl+V to paste CTT-SIS table.";
+static char gImportUserBuf[26] = {0};
+static int  gImportUserLen = 0;
+static ImportTypeSummary gImportTypes[IMPORT_TYPES_MAX];
+static int  gImportTypeCount = 0;
+static ImportSubjectRow gImportRows[IMPORT_ROWS_MAX];
+static int  gImportRowCount = 0;
+static char gImportSummaryLines[IMPORT_SUMMARY_LINES][160];
+static int  gImportSummaryCount = 0;
+
 /* forward declarations for runtime UI config values */
 static float gFontScale;
 static int   gTargetFPS;
+static const char *type_name_for_id(int tid);
+
+/* forward declarations used by startup import helpers */
+static void RefreshPlayer(void);
+void DB_ReloadData(void);
+
+static int utf8_char_len(unsigned char c)
+{
+    if ((c & 0xE0) == 0xC0) return 2;
+    if ((c & 0xF0) == 0xE0) return 3;
+    if ((c & 0xF8) == 0xF0) return 4;
+    return 1;
+}
+
+static void trim_copy(char *dst, int dstsz, const char *src)
+{
+    if (!dst || dstsz <= 0) return;
+    if (!src) { dst[0] = '\0'; return; }
+    while (*src && isspace((unsigned char)*src)) src++;
+    int n = (int)strlen(src);
+    while (n > 0 && isspace((unsigned char)src[n - 1])) n--;
+    if (n >= dstsz) n = dstsz - 1;
+    memcpy(dst, src, (size_t)n);
+    dst[n] = '\0';
+}
+
+static void to_ascii_normalized(const char *src, char *dst, int dstsz, int space_to_underscore, int lower)
+{
+    if (!dst || dstsz <= 0) return;
+    if (!src) { dst[0] = '\0'; return; }
+    int di = 0;
+    for (int si = 0; src[si] && di < dstsz - 1; ) {
+        unsigned char c = (unsigned char)src[si];
+        if (c < 128) {
+            char out = (char)c;
+            if (out == ' ' && space_to_underscore) out = '_';
+            if (out == '\t') {
+                dst[di++] = '\t';
+                si++;
+                continue;
+            }
+            if (lower) out = (char)tolower((unsigned char)out);
+            dst[di++] = out;
+            si++;
+            continue;
+        }
+
+        int clen = utf8_char_len(c);
+        if (clen <= 0) clen = 1;
+        if (src[si + clen - 1] == '\0') {
+            si++;
+            continue;
+        }
+        char mapped = covert_to_eng(src + si);
+        if (mapped) {
+            if (lower) mapped = (char)tolower((unsigned char)mapped);
+            dst[di++] = mapped;
+        }
+        si += clen;
+    }
+    dst[di] = '\0';
+}
+
+static int looks_like_subject_code(const char *s)
+{
+    if (!s || !s[0]) return 0;
+    int i = 0;
+    int alpha = 0;
+    while (s[i] && ((s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= 'a' && s[i] <= 'z'))) {
+        alpha++;
+        i++;
+    }
+    if (alpha < 2 || alpha > 4) return 0;
+    int digits = 0;
+    while (s[i] && isdigit((unsigned char)s[i])) {
+        digits++;
+        i++;
+    }
+    if (digits < 3) return 0;
+    return s[i] == '\0';
+}
+
+static int parse_first_int(const char *s)
+{
+    if (!s) return 0;
+    while (*s && !isdigit((unsigned char)*s) && *s != '-') s++;
+    return (int)strtol(s, NULL, 10);
+}
+
+static int token_is_plain_int(const char *s)
+{
+    if (!s || !s[0]) return 0;
+    int i = 0;
+    if (s[i] == '+' || s[i] == '-') i++;
+    int digits = 0;
+    for (; s[i]; i++) {
+        if (!isdigit((unsigned char)s[i])) return 0;
+        digits++;
+    }
+    return digits > 0;
+}
+
+static int token_is_grade(const char *s)
+{
+    if (!s || !s[0]) return 0;
+    if (!(s[0] == 'A' || s[0] == 'B' || s[0] == 'C' || s[0] == 'D' || s[0] == 'F' || s[0] == 'R' || s[0] == 'X'))
+        return 0;
+    if (s[1] == '\0') return 1;
+    if (s[1] == '+' && s[2] == '\0') return 1;
+    return 0;
+}
+
+static int token_is_number(const char *s)
+{
+    if (!s || !s[0]) return 0;
+    int i = 0;
+    if (s[i] == '+' || s[i] == '-') i++;
+    int digits = 0;
+    int dot_seen = 0;
+    for (; s[i]; i++) {
+        if (isdigit((unsigned char)s[i])) {
+            digits++;
+            continue;
+        }
+        if (s[i] == '.' && !dot_seen) {
+            dot_seen = 1;
+            continue;
+        }
+        return 0;
+    }
+    return digits > 0;
+}
+
+static int map_raw_type_to_internal(int raw_code)
+{
+    switch (raw_code) {
+        case 7:   return 13;
+        case 210: return 4;
+        case 220: return 3;
+        case 250: return 2;
+        case 300: return 1;
+        case 320: return 5;
+        case 360: return 12;
+        case 400: return 6;
+        case 401: return 7;
+        case 402: return 8;
+        case 403: return 9;
+        case 404: return 10;
+        case 405: return 11;
+        default:  return 0;
+    }
+}
+
+static int map_type_name_fallback(const char *norm)
+{
+    if (!norm) return 0;
+    if (strstr(norm, "co_so_va_cot_loi_nganh")) return 1;
+    if (strstr(norm, "toan_va_khoa_hoc_co_ban")) return 2;
+    if (strstr(norm, "giao_duc_the_chat")) return 3;
+    if (strstr(norm, "ly_luan_chinh_tri") || strstr(norm, "phap_luat_dai_cuong")) return 4;
+    if (strstr(norm, "kien_thuc_bo_tro") || strstr(norm, "tu_chon")) return 5;
+    if (strstr(norm, "mo_dun_1")) return 6;
+    if (strstr(norm, "mo_dun_2")) return 7;
+    if (strstr(norm, "mo_dun_3")) return 8;
+    if (strstr(norm, "mo_dun_4")) return 9;
+    if (strstr(norm, "mo_dun_5")) return 10;
+    if (strstr(norm, "mo_dun_6")) return 11;
+    if (strstr(norm, "thuc_tap")) return 12;
+    if (strstr(norm, "do_an") || strstr(norm, "khoa_luan")) return 13;
+    return 0;
+}
+
+static ImportTypeSummary *import_get_or_add_type(int tid)
+{
+    for (int i = 0; i < gImportTypeCount; i++)
+        if (gImportTypes[i].type_id == tid) return &gImportTypes[i];
+    if (gImportTypeCount >= IMPORT_TYPES_MAX) return NULL;
+    ImportTypeSummary *t = &gImportTypes[gImportTypeCount++];
+    memset(t, 0, sizeof(*t));
+    t->type_id = tid;
+    snprintf(t->display_name, sizeof(t->display_name), "%s", type_name_for_id(tid));
+    return t;
+}
+
+static void import_add_summary_line(const char *fmt, ...)
+{
+    if (gImportSummaryCount >= IMPORT_SUMMARY_LINES) return;
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(gImportSummaryLines[gImportSummaryCount],
+              sizeof(gImportSummaryLines[gImportSummaryCount]), fmt, ap);
+    va_end(ap);
+    gImportSummaryCount++;
+}
+
+static int split_tab_fields(const char *line, char fields[][512], int max_fields)
+{
+    int count = 0;
+    int start = 0;
+    int len = (int)strlen(line);
+    for (int i = 0; i <= len && count < max_fields; i++) {
+        if (line[i] == '\t' || line[i] == '\0') {
+            int n = i - start;
+            if (n >= 511) n = 511;
+            memcpy(fields[count], line + start, (size_t)n);
+            fields[count][n] = '\0';
+            count++;
+            start = i + 1;
+        }
+    }
+    return count;
+}
+
+static void import_reset_runtime_state(void)
+{
+    gImportTypeCount = 0;
+    gImportRowCount = 0;
+    gImportSummaryCount = 0;
+}
+
+static int write_subjects_from_import(char *out_msg, int out_msg_sz)
+{
+    FILE *f = fopen(gSubjectsDatPath, "w");
+    if (!f) {
+        snprintf(out_msg, out_msg_sz, "Import: cannot write subjects.dat file");
+        return 0;
+    }
+    fprintf(f,
+            "# subjects.dat - generated from CTT-SIS import\n"
+            "# Format: CODE TERM CREDIT Subject Name\n\n");
+
+    for (int tid = 1; tid < sizeSubjectType; tid++) {
+        int has = 0;
+        for (int i = 0; i < gImportRowCount; i++) {
+            if (gImportRows[i].type_id == tid) { has = 1; break; }
+        }
+        if (!has) continue;
+        fprintf(f, "[%d] %s\n", tid, type_name_for_id(tid));
+        for (int i = 0; i < gImportRowCount; i++) {
+            if (gImportRows[i].type_id != tid) continue;
+            fprintf(f, "%-9s %-5d %-6d %s\n",
+                    gImportRows[i].code,
+                    gImportRows[i].term,
+                    gImportRows[i].credit,
+                    gImportRows[i].name);
+        }
+        fprintf(f, "\n");
+    }
+    fclose(f);
+    return 1;
+}
+
+static int write_grad_modules_from_import(char *out_msg, int out_msg_sz)
+{
+    char lines[512][512];
+    int line_count = 0;
+    FILE *f = fopen(gGradCfgPath, "r");
+    if (!f) {
+        snprintf(out_msg, out_msg_sz, "Import: cannot read grad_config.cfg file");
+        return 0;
+    }
+    while (line_count < 512 && fgets(lines[line_count], sizeof(lines[line_count]), f))
+        line_count++;
+    fclose(f);
+
+    int module_count = 0;
+    for (int tid = 6; tid <= 11; tid++) {
+        for (int i = 0; i < gImportRowCount; i++) {
+            if (gImportRows[i].type_id == tid) { module_count++; break; }
+        }
+    }
+
+    char out_lines[640][512];
+    int out_count = 0;
+    int insert_at = -1;
+    for (int i = 0; i < line_count; i++) {
+        int tid = -1;
+        if (sscanf(lines[i], " %d", &tid) == 1 && tid >= 6 && tid <= 11) {
+            if (insert_at < 0) insert_at = out_count;
+            continue;
+        }
+        size_t cp = strnlen(lines[i], sizeof(lines[i]) - 1);
+        memcpy(out_lines[out_count], lines[i], cp);
+        out_lines[out_count][cp] = '\0';
+        out_count++;
+    }
+    if (insert_at < 0) insert_at = out_count;
+
+    char module_rows[32][512];
+    int module_rows_count = 0;
+    for (int k = 0; k < module_count && module_rows_count < 32; k++) {
+        int tid = 6 + k;
+        int gid = (k < 3) ? 1 : 2;
+        snprintf(module_rows[module_rows_count], sizeof(module_rows[module_rows_count]),
+                 "%-12d %-6d %-7d %-8d # %s\n",
+                 tid, 0, 0, gid, type_name_for_id(tid));
+        module_rows_count++;
+    }
+
+    for (int i = out_count - 1; i >= insert_at; i--) {
+        strncpy(out_lines[i + module_rows_count], out_lines[i], sizeof(out_lines[i + module_rows_count]) - 1);
+        out_lines[i + module_rows_count][sizeof(out_lines[i + module_rows_count]) - 1] = '\0';
+    }
+    for (int i = 0; i < module_rows_count; i++)
+        strncpy(out_lines[insert_at + i], module_rows[i], sizeof(out_lines[insert_at + i]) - 1);
+    for (int i = 0; i < module_rows_count; i++)
+        out_lines[insert_at + i][sizeof(out_lines[insert_at + i]) - 1] = '\0';
+    out_count += module_rows_count;
+
+    f = fopen(gGradCfgPath, "w");
+    if (!f) {
+        snprintf(out_msg, out_msg_sz, "Import: cannot write grad_config.cfg file");
+        return 0;
+    }
+    for (int i = 0; i < out_count; i++) fputs(out_lines[i], f);
+    fclose(f);
+    return 1;
+}
+
+static int import_parse_only(char *out_msg, int out_msg_sz)
+{
+    import_reset_runtime_state();
+    if (!gImportPasted || gImportRawLen <= 0) {
+        snprintf(out_msg, out_msg_sz, "No pasted data. Press Ctrl+V first.");
+        return 0;
+    }
+
+    int current_raw_type = 0;
+    int current_tid = 0;
+
+    const char *cursor = gImportRaw;
+    while (*cursor) {
+        const char *nl = strchr(cursor, '\n');
+        int ll = nl ? (int)(nl - cursor) : (int)strlen(cursor);
+        if (ll <= 0) {
+            if (!nl) break;
+            cursor = nl + 1;
+            continue;
+        }
+
+        char line[2048];
+        if (ll >= (int)sizeof(line)) ll = (int)sizeof(line) - 1;
+        memcpy(line, cursor, (size_t)ll);
+        line[ll] = '\0';
+        if (ll > 0 && line[ll - 1] == '\r') line[ll - 1] = '\0';
+
+        char norm[2048];
+        to_ascii_normalized(line, norm, (int)sizeof(norm), 1, 1);
+
+        if (strstr(norm, "ma_loai_hp:")) {
+            const char *p = strstr(norm, "ma_loai_hp:");
+            current_raw_type = parse_first_int(p + 11);
+        } else if (strstr(norm, "collapse\tloai_hp:")) {
+            const char *p = strstr(norm, "loai_hp:");
+            char type_norm[256] = {0};
+            if (p) {
+                p += 8;
+                int i = 0;
+                while (p[i] && strncmp(p + i, "(count=", 7) != 0 && i < (int)sizeof(type_norm) - 1) {
+                    type_norm[i] = p[i];
+                    i++;
+                }
+                type_norm[i] = '\0';
+            }
+            int exp_count = 0, exp_credit = 0, exp_pass = 0;
+            char *pc = strstr(norm, "count=");
+            if (pc) exp_count = parse_first_int(pc + 6);
+            pc = strstr(norm, "tong_tc:");
+            if (pc) exp_credit = parse_first_int(pc + 8);
+            pc = strstr(norm, "tong_dat:");
+            if (pc) exp_pass = parse_first_int(pc + 9);
+
+            current_tid = map_raw_type_to_internal(current_raw_type);
+            if (current_tid == 0) current_tid = map_type_name_fallback(type_norm);
+
+            if (current_tid > 0) {
+                ImportTypeSummary *t = import_get_or_add_type(current_tid);
+                if (t) {
+                    if (exp_count > 0) t->expected_count = exp_count;
+                    if (exp_credit > 0) t->expected_total_credit = exp_credit;
+                    if (exp_pass >= 0) t->expected_pass_credit = exp_pass;
+                    if (type_norm[0]) {
+                        char pretty[96];
+                        to_ascii_normalized(type_norm, pretty, (int)sizeof(pretty), 0, 0);
+                        for (int i = 0; pretty[i]; i++) if (pretty[i] == '_') pretty[i] = ' ';
+                        trim_copy(t->display_name, (int)sizeof(t->display_name), pretty);
+                    }
+                }
+            }
+        } else {
+            char fields[20][512];
+            int nf = split_tab_fields(line, fields, 20);
+            int code_idx = -1;
+            for (int i = 0; i < nf; i++) {
+                char token_trim[128] = {0};
+                trim_copy(token_trim, (int)sizeof(token_trim), fields[i]);
+                if (looks_like_subject_code(token_trim)) {
+                    code_idx = i;
+                    break;
+                }
+            }
+            if (code_idx >= 0 && current_tid > 0 && gImportRowCount < IMPORT_ROWS_MAX) {
+                ImportSubjectRow *r = &gImportRows[gImportRowCount++];
+                memset(r, 0, sizeof(*r));
+                r->type_id = current_tid;
+                snprintf(r->type_name, sizeof(r->type_name), "%s", type_name_for_id(current_tid));
+
+                char code[64] = {0};
+                trim_copy(code, (int)sizeof(code), fields[code_idx]);
+                snprintf(r->code, sizeof(r->code), "%s", code);
+
+                char name_raw[MAXSIZENAME] = {0};
+                int name_idx = code_idx + 1;
+                while (name_idx < nf && name_raw[0] == '\0') {
+                    trim_copy(name_raw, (int)sizeof(name_raw), fields[name_idx]);
+                    name_idx++;
+                }
+
+                char term_tok[64] = {0};
+                int term_idx = name_idx;
+                while (term_idx < nf && term_tok[0] == '\0') {
+                    trim_copy(term_tok, (int)sizeof(term_tok), fields[term_idx]);
+                    term_idx++;
+                }
+
+                char credit_tok[64] = {0};
+                int cred_idx = term_idx;
+                while (cred_idx < nf && credit_tok[0] == '\0') {
+                    trim_copy(credit_tok, (int)sizeof(credit_tok), fields[cred_idx]);
+                    cred_idx++;
+                }
+
+                r->term = parse_first_int(term_tok);
+                if (r->term < 0) r->term = 0;
+                r->credit = parse_first_int(credit_tok);
+                if (r->credit < 0) r->credit = 0;
+
+                int learned_credit = 0;
+                char letter_tok[8] = {0};
+                float score_num = 0.f;
+                int after_credit_idx = cred_idx;
+                for (int i = after_credit_idx; i < nf; i++) {
+                    char tok[64] = {0};
+                    trim_copy(tok, (int)sizeof(tok), fields[i]);
+                    if (tok[0] == '\0') continue;
+
+                    if (learned_credit == 0 && token_is_plain_int(tok)) {
+                        learned_credit = atoi(tok);
+                        continue;
+                    }
+                    if (letter_tok[0] == '\0' && token_is_grade(tok)) {
+                        snprintf(letter_tok, sizeof(letter_tok), "%s", tok);
+                        continue;
+                    }
+                    if (score_num <= 0.f && token_is_number(tok)) {
+                        score_num = (float)atof(tok);
+                    }
+                }
+
+                char name_ascii[MAXSIZENAME] = {0};
+                to_ascii_normalized(name_raw, name_ascii, (int)sizeof(name_ascii), 0, 0);
+                trim_copy(r->name, (int)sizeof(r->name), name_ascii);
+                if (r->name[0] == '\0') {
+                    strncpy(r->name, r->code, sizeof(r->name) - 1);
+                    r->name[sizeof(r->name) - 1] = '\0';
+                }
+
+                r->studied = 0;
+                r->pass = 0;
+                r->score_num = score_num;
+                r->letter[0] = '\0';
+                if (letter_tok[0]) snprintf(r->letter, sizeof(r->letter), "%s", letter_tok);
+
+                if (r->letter[0]) {
+                    r->studied = 1;
+                    if (!(r->letter[0] == 'F' || r->letter[0] == 'R' || r->letter[0] == 'X')) r->pass = 1;
+                } else if (learned_credit > 0 || r->score_num > 0.f) {
+                    r->studied = 1;
+                    if (r->credit > 0 && learned_credit >= r->credit) r->pass = 1;
+                }
+
+                ImportTypeSummary *t = import_get_or_add_type(current_tid);
+                if (t) t->parsed_count++;
+            }
+        }
+
+        if (!nl) break;
+        cursor = nl + 1;
+    }
+
+    if (gImportRowCount <= 0) {
+        snprintf(out_msg, out_msg_sz, "Import failed: no subject rows detected. Please copy full CTT-SIS table again.");
+        return 0;
+    }
+
+    int ok = 1;
+    static const int required_ids[] = {1, 2, 3, 4, 5, 12, 13};
+    for (int k = 0; k < (int)(sizeof(required_ids) / sizeof(required_ids[0])); k++) {
+        int tid = required_ids[k];
+        int found = 0;
+        for (int i = 0; i < gImportTypeCount; i++) {
+            if (gImportTypes[i].type_id == tid && gImportTypes[i].parsed_count > 0) {
+                found = 1;
+                break;
+            }
+        }
+        if (!found) {
+            ok = 0;
+            import_add_summary_line("Missing required type [%d] %s", tid, type_name_for_id(tid));
+        }
+    }
+
+    for (int i = 0; i < gImportTypeCount; i++) {
+        ImportTypeSummary *t = &gImportTypes[i];
+        if (t->expected_count > 0 && t->parsed_count != t->expected_count) {
+            ok = 0;
+            import_add_summary_line("[%d] %s: parsed %d / expected %d",
+                                    t->type_id, t->display_name,
+                                    t->parsed_count, t->expected_count);
+        }
+    }
+
+    if (!ok) {
+        snprintf(out_msg, out_msg_sz, "Imported with warnings. Please re-copy table (missing/mismatch detected).");
+        return 0;
+    }
+
+    gImportSummaryCount = 0;
+    for (int i = 0; i < gImportTypeCount && gImportSummaryCount < IMPORT_SUMMARY_LINES; i++) {
+        ImportTypeSummary *t = &gImportTypes[i];
+        import_add_summary_line("[%d] %s | subjects=%d | total_tc=%d | passed_tc=%d",
+                                t->type_id,
+                                t->display_name,
+                                t->parsed_count,
+                                t->expected_total_credit,
+                                t->expected_pass_credit);
+    }
+    snprintf(out_msg, out_msg_sz, "Import success: wrote %d subjects, %d types.", gImportRowCount, gImportTypeCount);
+    return 1;
+}
+
+static int import_finalize_for_user(char *out_msg, int out_msg_sz);
 
 static const char *settings_target_path(int t)
 {
@@ -566,11 +1155,143 @@ static void InitPlayerDB(void)
     SetWindowTitle(title);
 }
 
+static int import_finalize_for_user(char *out_msg, int out_msg_sz)
+{
+    if (gImportRowCount <= 0 || gImportTypeCount <= 0) {
+        snprintf(out_msg, out_msg_sz, "Nothing to import. Parse data first.");
+        return 0;
+    }
+    if (gImportUserLen <= 0) {
+        snprintf(out_msg, out_msg_sz, "Please enter username.");
+        return 0;
+    }
+
+    if (!write_subjects_from_import(out_msg, out_msg_sz)) return 0;
+    if (!write_grad_modules_from_import(out_msg, out_msg_sz)) return 0;
+
+    char db_path_local[128];
+    snprintf(db_path_local, sizeof(db_path_local), "db_%s.db", gImportUserBuf);
+
+    if (gDB) DB_Close();
+    remove(db_path_local); /* overwrite if exists */
+
+    snprintf(gUserName, sizeof(gUserName), "%s", gImportUserBuf);
+    gNameLen = (int)strlen(gUserName);
+    InitPlayerDB();
+    if (!gDBReady) {
+        snprintf(out_msg, out_msg_sz, "Failed to initialize DB for user %s", gImportUserBuf);
+        return 0;
+    }
+
+    RefreshPlayer();
+
+    gImportOpen = false;
+    gImportStage = 0;
+    snprintf(out_msg, out_msg_sz, "Import completed for user %s (types/subjects only, db overwritten).", gImportUserBuf);
+    return 1;
+}
+
 /* --- Keyboard handler -------------------------------------------------- */
 static void HandleKeyboard(void)
 {
+    if (gImportOpen) {
+        if (IsKeyPressed(KEY_F2)) {
+            gImportOpen = false;
+            gImportStage = 0;
+            return;
+        }
+
+        if (gImportStage == 0) {
+            if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_V)) {
+                const char *clip = GetClipboardText();
+                if (clip && clip[0]) {
+                    snprintf(gImportRaw, sizeof(gImportRaw), "%s", clip);
+                    gImportRawLen = (int)strlen(gImportRaw);
+                    gImportPasted = true;
+                    gImportLastSuccess = false;
+                    gImportStatusKind = 0;
+                    snprintf(gImportStatusMsg, sizeof(gImportStatusMsg),
+                             "Table pasted (%d chars). Press Enter to parse.", gImportRawLen);
+                } else {
+                    gImportStatusKind = -1;
+                    snprintf(gImportStatusMsg, sizeof(gImportStatusMsg),
+                             "Clipboard is empty. Copy full CTT-SIS table then press Ctrl+V.");
+                }
+                return;
+            }
+
+            if (IsKeyPressed(KEY_ENTER)) {
+                int ok = import_parse_only(gImportStatusMsg, (int)sizeof(gImportStatusMsg));
+                gImportStatusKind = ok ? 1 : -1;
+                gImportLastSuccess = ok ? true : false;
+                if (ok) gImportStage = 1;
+                return;
+            }
+
+            if (IsKeyPressed(KEY_BACKSPACE)) {
+                gImportPasted = false;
+                gImportRaw[0] = '\0';
+                gImportRawLen = 0;
+                gImportLastSuccess = false;
+                gImportStatusKind = 0;
+                gImportSummaryCount = 0;
+                snprintf(gImportStatusMsg, sizeof(gImportStatusMsg), "Paste cleared. Press Ctrl+V to paste again.");
+                return;
+            }
+        } else if (gImportStage == 1) {
+            if (IsKeyPressed(KEY_ENTER)) {
+                gImportStage = 2;
+                gImportUserLen = 0;
+                gImportUserBuf[0] = '\0';
+                gImportStatusKind = 0;
+                snprintf(gImportStatusMsg, sizeof(gImportStatusMsg), "Enter username then press Enter to import types/subjects and overwrite DB if exists.");
+                return;
+            }
+            if (IsKeyPressed(KEY_BACKSPACE)) {
+                gImportStage = 0;
+                gImportStatusKind = 0;
+                snprintf(gImportStatusMsg, sizeof(gImportStatusMsg), "Back to paste step. Press Ctrl+V to re-copy.");
+                return;
+            }
+        } else {
+            if ((IsKeyPressed(KEY_BACKSPACE) || IsKeyPressedRepeat(KEY_BACKSPACE)) && gImportUserLen > 0)
+                gImportUserBuf[--gImportUserLen] = '\0';
+
+            int ch;
+            while ((ch = GetCharPressed()) != 0) {
+                if (ch >= 32 && ch < 127 && gImportUserLen < 25) {
+                    gImportUserBuf[gImportUserLen++] = (char)ch;
+                    gImportUserBuf[gImportUserLen] = '\0';
+                }
+            }
+
+            if (IsKeyPressed(KEY_ENTER)) {
+                int ok = import_finalize_for_user(gImportStatusMsg, (int)sizeof(gImportStatusMsg));
+                gImportStatusKind = ok ? 1 : -1;
+                gImportLastSuccess = ok ? true : false;
+                if (ok) {
+                    strncpy(gResultMsg, gImportStatusMsg, sizeof(gResultMsg) - 1);
+                    gResultMsg[sizeof(gResultMsg) - 1] = '\0';
+                    gHasResult = true;
+                    gResultShowUntil = (float)GetTime() + 5.f;
+                }
+                return;
+            }
+        }
+        return;
+    }
+
     /* Name-input phase: capture username before anything else */
     if (gNameInput) {
+        if (IsKeyPressed(KEY_F2)) {
+            gImportOpen = true;
+            gImportStage = 0;
+            gImportStatusKind = 0;
+            gImportSummaryCount = 0;
+            snprintf(gImportStatusMsg, sizeof(gImportStatusMsg),
+                     "Copy table at CTT-SIS, then press Ctrl+V.");
+            return;
+        }
         if (IsKeyPressed(KEY_ESCAPE)) { CloseWindow(); return; }
         if (IsKeyPressed(KEY_ENTER) && gNameLen > 0) { InitPlayerDB(); return; }
         if ((IsKeyPressed(KEY_BACKSPACE) || IsKeyPressedRepeat(KEY_BACKSPACE))
@@ -788,6 +1509,7 @@ static void BuildLayout(void)
 
     if (gNameInput) {
         RenderNameInput();
+        if (gImportOpen) RenderImportSetupInput();
     } else {
         /* Floating overlays rendered on top via zIndex */
         if (gEditOpen)   RenderEditPopup();

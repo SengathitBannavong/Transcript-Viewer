@@ -1,1 +1,16 @@
-- fetch data from web data (ctt sis)
+- fetch data from web data (ctt sis):
+  0.request user to copy all table on chuong trinh dao tao at ctt-sis if user already paste show user already paste but not show detail
+  1.fetch by copy all table (chuong trinh dao tao)
+  2.replace space with _ except Tap (\t) and convert Vietnam format to English format by function on utf8_vn.c 
+  3.read all by format:
+    if start with "Collapse	Loại HP:" this is type of subject after this is will be <name of type> (Count=<count of subject on this type>, Tổng TC: <sum all of credit>, Tổng đạt: <sum credit of pass subject>)
+    if start with Upper Capital around 2-3 lengh and next with number. That is id of subject than it wil be <id> <name> <recomment term> <credit> <if have same credit not space it mean this subject is pass, if not pass it will be nothing> <type subject> [if pass it will be have <capital grade> <crdit>] <short name type subject>
+  4.fetch all of type subject and subject
+  5.valid request type of subject and count some data program want
+  6.show output for user know:
+    if all correctly show all of type of fetching and meta data but not show all subject on that with green color
+    if it missing show all what type of subject missing and suggest user to copy data correctly
+  7.overwrite subjects.dat for this data and change grad_config.cfg only part module example: if new data have only 3 module it should change to setup only 3 module with default value is mode=0, limit=0, group=<if 1-3 is 1 else if 4-6 is 1> and if only 5 module it should change to setup only 5 module with default (in future it's will have full module to setup grad_config.cfg later)
+  8.wait for user check information and make button to make user confirm if user confirm make user enter name for import data user all of subject score and already learn and if user enter name had exite overwrite it
+  (if something failed at any step fallback to step 0)
+  (in file grad_config.cfg have many line of comment dont overwrite it only allow to overwrite line of setting and remember to comment name of type next line settup)

@@ -33,6 +33,8 @@
 #define C_ACCENT     ((Clay_Color){ 99, 102, 241, 255})
 #define C_ACCENT_DIM ((Clay_Color){ 50,  52, 130, 255})
 #define C_ACCENT_BG  ((Clay_Color){ 22,  23,  58, 255})
+#define C_ROYAL_BLUE_1    ((Clay_Color){ 72, 118, 255, 255})
+#define C_ROYAL_BLUE_1_BG ((Clay_Color){ 18,  32,  82, 255})
 #define C_TEXT       ((Clay_Color){224, 224, 242, 255})
 #define C_SUBTEXT    ((Clay_Color){110, 110, 155, 255})
 #define C_WHITE      ((Clay_Color){255, 255, 255, 255})
@@ -2117,7 +2119,178 @@ static void RenderNameInput(void)
             },
         }) {
             CLAY_TEXT(CLAY_STRING("Enter Confirm"), TC(C_SUBTEXT, 10));
+            CLAY_TEXT(CLAY_STRING("F2 Import CTT-SIS"), TC(C_SUBTEXT, 10));
             CLAY_TEXT(CLAY_STRING("ESC Quit"), TC(C_SUBTEXT, 10));
+        }
+    }
+}
+
+static void RenderImportSetupInput(void)
+{
+    CLAY(CLAY_ID("ImportBackdrop"), {
+        .layout = {
+            .sizing = { CLAY_SIZING_FIXED((float)gScreenW), CLAY_SIZING_FIXED((float)gScreenH) },
+        },
+        .backgroundColor = (Clay_Color){ 0, 0, 0, 180 },
+        .floating = { .attachTo = CLAY_ATTACH_TO_ROOT, .zIndex = 30 },
+    }) {}
+
+    CLAY(CLAY_ID("ImportCard"), {
+        .layout = {
+            .sizing = { CLAY_SIZING_FIXED(900), CLAY_SIZING_FIT(0) },
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            .childGap = 10,
+            .padding = { 18, 18, 16, 16 },
+        },
+        .backgroundColor = C_CARD,
+        .cornerRadius = CLAY_CORNER_RADIUS(12),
+        .border = { .color = C_ACCENT, .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+        .floating = {
+            .attachTo = CLAY_ATTACH_TO_ROOT,
+            .attachPoints = { .element = CLAY_ATTACH_POINT_CENTER_CENTER, .parent = CLAY_ATTACH_POINT_CENTER_CENTER },
+            .zIndex = 35,
+        },
+    }) {
+        CLAY_TEXT(CLAY_STRING("Import Curriculum From CTT-SIS"), TC(C_TEXT, 14));
+        CLAY_TEXT(CLAY_STRING("1) Copy ALL rows in 'Chuong trinh dao tao' table."), TC(C_SUBTEXT, 10));
+        if (gImportStage == 0) {
+            CLAY_TEXT(CLAY_STRING("2) Press Ctrl+V here. 3) Press Enter to parse only (review first)."), TC(C_SUBTEXT, 10));
+        } else if (gImportStage == 1) {
+            CLAY_TEXT(CLAY_STRING("Review summary, then confirm to continue."), TC(C_SUBTEXT, 10));
+        } else {
+            CLAY_TEXT(CLAY_STRING("Enter username to import only subject types and subjects. Existing DB with same name will be overwritten."), TC(C_SUBTEXT, 10));
+        }
+        CLAY_TEXT(CLAY_STRING("Press F2 to return to login input."), TC(C_SUBTEXT, 10));
+
+        CLAY(CLAY_ID("ImportPasteState"), {
+            .layout = {
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(38) },
+                .padding = { 12, 12, 0, 0 },
+                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+            },
+            .backgroundColor = gImportPasted ? C_GREEN_BG : C_TBL_HDR,
+            .cornerRadius = CLAY_CORNER_RADIUS(6),
+            .border = { .color = gImportPasted ? C_GREEN : C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+        }) {
+            if (gImportPasted)
+                CLAY_TEXT(DS("Pasted data detected (%d chars). Raw content hidden.", gImportRawLen), TC(C_GREEN, 10));
+            else
+                CLAY_TEXT(CLAY_STRING("No pasted data yet."), TC(C_SUBTEXT, 10));
+        }
+
+        Clay_Color statusClr = C_SUBTEXT;
+        if (gImportStatusKind > 0) statusClr = C_GREEN;
+        else if (gImportStatusKind < 0) statusClr = C_RED;
+        CLAY_TEXT(DS("%s", gImportStatusMsg), TC(statusClr, 10));
+
+        if (gImportSummaryCount > 0) {
+            CLAY(CLAY_ID("ImportSummaryBox"), {
+                .layout = {
+                    .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                    .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                    .childGap = 4,
+                    .padding = { 10, 10, 8, 8 },
+                },
+                .backgroundColor = gImportLastSuccess ? C_ROYAL_BLUE_1_BG : C_RED_BG,
+                .cornerRadius = CLAY_CORNER_RADIUS(6),
+                .border = { .color = gImportLastSuccess ? C_ROYAL_BLUE_1 : C_RED, .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+            }) {
+                CLAY_TEXT(CLAY_STRING("Type summary"), TC(gImportLastSuccess ? C_ROYAL_BLUE_1 : C_RED, 10));
+                for (int i = 0; i < gImportSummaryCount; i++) {
+                    CLAY_TEXT(DS("- %s", gImportSummaryLines[i]), TC(C_TEXT, 10));
+                }
+            }
+        }
+
+        if (gImportStage == 1) {
+            CLAY(CLAY_ID("ImportBtnRow"), {
+                .layout = {
+                    .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                    .childGap = 10,
+                    .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                },
+            }) {
+                CLAY(CLAY_ID("ImportConfirmBtn"), {
+                    .layout = {
+                        .sizing = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(34) },
+                        .padding = { 16, 16, 0, 0 },
+                        .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+                    },
+                    .backgroundColor = Clay_Hovered() ? C_GREEN : C_GREEN_BG,
+                    .cornerRadius = CLAY_CORNER_RADIUS(6),
+                    .border = { .color = C_GREEN, .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+                }) {
+                    if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                        gImportStage = 2;
+                        gImportUserLen = 0;
+                        gImportUserBuf[0] = '\0';
+                        gImportStatusKind = 0;
+                        snprintf(gImportStatusMsg, sizeof(gImportStatusMsg),
+                                 "Enter username then press Enter to import types/subjects and overwrite DB if exists.");
+                    }
+                    CLAY_TEXT(CLAY_STRING("Confirm"), TC(C_WHITE, 10));
+                }
+
+                CLAY(CLAY_ID("ImportBackBtn"), {
+                    .layout = {
+                        .sizing = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(34) },
+                        .padding = { 16, 16, 0, 0 },
+                        .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+                    },
+                    .backgroundColor = Clay_Hovered() ? C_ROW_HOVER : C_TBL_HDR,
+                    .cornerRadius = CLAY_CORNER_RADIUS(6),
+                    .border = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+                }) {
+                    if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                        gImportStage = 0;
+                        gImportStatusKind = 0;
+                        snprintf(gImportStatusMsg, sizeof(gImportStatusMsg),
+                                 "Back to paste step. Press Ctrl+V to re-copy.");
+                    }
+                    CLAY_TEXT(CLAY_STRING("Re-copy"), TC(C_TEXT, 10));
+                }
+            }
+        }
+
+        if (gImportStage == 2) {
+            CLAY_TEXT(CLAY_STRING("Username for import DB"), TC(C_SUBTEXT, 10));
+            CLAY(CLAY_ID("ImportUserInput"), {
+                .layout = {
+                    .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(40) },
+                    .padding = { 12, 12, 0, 0 },
+                    .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                },
+                .backgroundColor = C_ACCENT_BG,
+                .cornerRadius = CLAY_CORNER_RADIUS(6),
+                .border = { .color = C_ACCENT, .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+            }) {
+                bool cursorOn = ((int)(GetTime() * 2) % 2) == 0;
+                if (gImportUserLen > 0)
+                    CLAY_TEXT(cursorOn ? DS("%s|", gImportUserBuf) : DS("%s ", gImportUserBuf), TC(C_TEXT, 12));
+                else
+                    CLAY_TEXT(cursorOn ? CLAY_STRING("|") : CLAY_STRING(" "), TC(C_SUBTEXT, 12));
+            }
+        }
+
+        CLAY(CLAY_ID("ImportFooterRow"), {
+            .layout = {
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .childGap = 20,
+                .layoutDirection = CLAY_LEFT_TO_RIGHT,
+            },
+        }) {
+            if (gImportStage == 0) {
+                CLAY_TEXT(CLAY_STRING("Ctrl+V Paste"), TC(C_SUBTEXT, 10));
+                CLAY_TEXT(CLAY_STRING("Enter Parse"), TC(C_SUBTEXT, 10));
+                CLAY_TEXT(CLAY_STRING("Backspace Clear Paste"), TC(C_SUBTEXT, 10));
+            } else if (gImportStage == 1) {
+                CLAY_TEXT(CLAY_STRING("Confirm Button Or Enter"), TC(C_SUBTEXT, 10));
+                CLAY_TEXT(CLAY_STRING("Backspace Re-copy"), TC(C_SUBTEXT, 10));
+            } else {
+                CLAY_TEXT(CLAY_STRING("Type Username"), TC(C_SUBTEXT, 10));
+                CLAY_TEXT(CLAY_STRING("Enter Execute Import"), TC(C_SUBTEXT, 10));
+            }
+            CLAY_TEXT(CLAY_STRING("F2 Back To Login"), TC(C_SUBTEXT, 10));
         }
     }
 }

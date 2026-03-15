@@ -9,11 +9,31 @@ When the program launches, a **name-input screen** appears.
 | Any printable key (`A`–`Z`, `0`–`9`, `_`, `-`, …) | Type your username (max 25 chars) |
 | `Backspace` | Delete the last character (hold to repeat) |
 | `Enter` | Confirm username and open (or create) `db_<name>.db` |
+| `F2` | Open **CTT-SIS Import** workflow |
 | `Escape` | Quit the program |
 
 - If `db_<name>.db` already exists it is opened and your saved scores are loaded.
 - If it is new, the database is created and seeded from `assets/subjects.dat`.
-- If the username is **jerry** and `assets/tablejerry.txt` exists, scores are auto-imported on first create.
+- If the username is **test** and `assets/tabletest.txt` exists, scores are auto-imported on first create.
+
+### CTT-SIS Import workflow (`F2` at startup)
+
+This workflow is used to rebuild curriculum structure from copied CTT-SIS table data.
+
+| Step | Action |
+|------|--------|
+| 1 | Press `F2` on the name-input screen |
+| 2 | Copy full CTT-SIS "Chuong trinh dao tao" table |
+| 3 | Press `Ctrl+V` to paste (raw content is hidden in UI) |
+| 4 | Press `Enter` to parse and show type summary |
+| 5 | Review summary, then click **Confirm** (or press `Enter`) |
+| 6 | Enter target username |
+| 7 | Press `Enter` to execute import and overwrite `db_<name>.db` if it exists |
+
+Important behavior:
+- Import writes only **subject types + subjects** (`subjects.dat` + module rows in `grad_config.cfg`).
+- Import does **not** import scores or studied status.
+- On success, a new DB for the entered username is created from imported curriculum data.
 
 ---
 
@@ -22,7 +42,7 @@ When the program launches, a **name-input screen** appears.
 | Key | Action |
 |-----|--------|
 | `Ctrl + K` | Open / close the Command Palette |
-| `Ctrl + ,` | Open Asset Paths settings popup |
+| `Ctrl + ,` | Open settings popup (`ui.cfg`, `grad_config.cfg`, `subjects.dat`) |
 
 ---
 
@@ -49,7 +69,7 @@ Open with **Ctrl + K**, then type a command and press **Enter**.
 | `filter fail` | `filter fail` | Show only failed (studied but not pass) subjects |
 | `filter noscore` | `filter noscore` | Show only subjects with no score (`X`) |
 | `filter clear` | `filter clear` | Clear all table filters |
-| `settings` | `settings` | Open Asset Paths settings popup |
+| `settings` | `settings` | Open settings popup (`ui.cfg`, `grad_config.cfg`, `subjects.dat`) |
 | `logout` | `logout` | Close the current database and return to the name-input screen |
 | `help` | `help` | Show available commands in the result toast |
 

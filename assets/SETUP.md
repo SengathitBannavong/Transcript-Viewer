@@ -6,6 +6,29 @@ All files in this folder can be edited with any plain-text editor.
 
 ---
 
+## Startup CTT-SIS Import (F2)
+
+At the startup name-input screen, press `F2` to open the curriculum import flow.
+
+Workflow:
+1. Copy full CTT-SIS "Chuong trinh dao tao" table.
+2. Press `Ctrl+V` in the import popup.
+3. Press `Enter` to parse and review type summary.
+4. Confirm, enter username, then press `Enter` to import.
+
+What this import updates:
+- `subjects.dat` (subject types + subject rows)
+- Module rows (`type_id` 6..11) in `grad_config.cfg`
+- Recreates `db_<username>.db` (overwrite if existed)
+
+What this import does NOT update:
+- Scores
+- Studied status
+
+After import, the new DB starts with default score state (`X` / not studied).
+
+---
+
 ## ui.cfg  —  Display settings
 
 ```
@@ -133,7 +156,7 @@ IT3011   2   2   Data Structures and Algorithms
 
 | Field | Rules |
 |---|---|
-| `CODE` | Unique subject identifier, no spaces, max 15 chars |
+| `CODE` | Subject identifier, no spaces, max 15 chars. May repeat across different `[type_id]` sections when a subject belongs to multiple modules |
 | `TERM` | Integer ≥ 1 — which academic term the subject appears in |
 | `CREDIT` | Integer ≥ 1 |
 | `Subject Name` | Free text; rest of line after tab / spaces |

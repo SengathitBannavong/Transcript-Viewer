@@ -26,6 +26,11 @@
 
 /* Pull in the same header stack as main.c (no Raylib needed here) */
 #include "app_data.h"     /* gPlayer, gTypeName, gGradRules, gDataWarnings… */
+
+/* db.h expects runtime-configurable asset paths from main.c; provide test defaults. */
+static char gSubjectsDatPath[512] = "assets/subjects.dat";
+static char gGradCfgPath[512] = "assets/grad_config.cfg";
+
 #include "db.h"           /* gDB, DB_CreateSchema, DB_ValidateData, … */
 #include "score_logic.h"  /* all score / graduation calculation functions   */
 
@@ -224,6 +229,17 @@ static void db_insert_rule(int type_id)
              "INSERT INTO grad_rules(type_id,mode,limit_val,group_id)"
              " VALUES(%d,0,0,0);", type_id);
     db_exec(sql);
+}
+
+static int db_scalar_int(const char *sql)
+{
+    sqlite3_stmt *st = NULL;
+    int v = 0;
+    if (sqlite3_prepare_v2(gDB, sql, -1, &st, NULL) == SQLITE_OK) {
+        if (sqlite3_step(st) == SQLITE_ROW) v = sqlite3_column_int(st, 0);
+    }
+    if (st) sqlite3_finalize(st);
+    return v;
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -562,6 +578,43 @@ static void test_db_validate(void)
     if (gDB) { sqlite3_close(gDB); gDB = NULL; }
 }
 
+    /* ── 9. duplicate subject code across types ───────────────────────── */
+    static void test_db_duplicate_code_across_types(void)
+    {
+        GROUP("DB duplicate code across types");
+        db_test_open();
+
+        db_insert_type(6);
+        db_insert_type(7);
+
+        db_exec("INSERT INTO subjects(code,name,type_id,credit,term) VALUES('IT4244','M1',6,2,6);");
+        db_exec("INSERT INTO subjects(code,name,type_id,credit,term) VALUES('IT4244','M2',7,2,6);");
+        db_exec("INSERT OR IGNORE INTO subjects(code,name,type_id,credit,term) VALUES('IT4244','M1dup',6,2,6);");
+
+        CHECK(db_scalar_int("SELECT COUNT(*) FROM subjects WHERE code='IT4244';") == 2,
+            "same code in different types is preserved; same code+type is deduped");
+
+        db_exec("INSERT OR IGNORE INTO subject_scores(subject_id,score_letter,mid,final,pass,ever_studied)"
+            " SELECT id,'X',0.0,0.0,0,0 FROM subjects WHERE code='IT4244';");
+
+        int changed = DB_UpdateScore("IT4244", 8.0f, 8.0f);
+        CHECK(changed == 2,
+            "DB_UpdateScore updates all duplicated rows sharing same code");
+
+        CHECK(db_scalar_int("SELECT COUNT(*) FROM subject_scores sc"
+                    " JOIN subjects s ON s.id=sc.subject_id"
+                    " WHERE s.code='IT4244' AND sc.pass=1 AND sc.ever_studied=1;") == 2,
+            "both duplicate rows have updated pass/studied flags");
+
+        Player p;
+        memset(&p, 0, sizeof(p));
+        DB_Query(&p);
+        CHECK(p.numofSubjectType[6].Total_Subject == 1 && p.numofSubjectType[7].Total_Subject == 1,
+            "DB_Query keeps duplicates in separate type sections for rendering");
+
+        if (gDB) { sqlite3_close(gDB); gDB = NULL; }
+    }
+
 /* ══════════════════════════════════════════════════════════════════════
  * main
  * ══════════════════════════════════════════════════════════════════════ */
@@ -579,6 +632,7 @@ int main(void)
     test_calc_required_credits();
     test_update_player_status();
     test_db_validate();
+    test_db_duplicate_code_across_types();
 
     printf("\n==========================================================\n");
     printf("  Results:  %d passed,  %d failed\n", t_pass, t_fail);

@@ -8,7 +8,7 @@
  * Schema
  * ──────
  *   subject_types  (id INTEGER PK, name TEXT)
- *   subjects       (id PK, code TEXT UNIQUE, name TEXT,
+ *   subjects       (id PK, code TEXT, name TEXT,
  *                   type_id INT, credit INT, term INT)
  *   subject_scores (subject_id PK, score_letter TEXT,
  *                   mid REAL, final REAL, pass INT, ever_studied INT)
@@ -122,11 +122,12 @@ void DB_CreateSchema(void)
     db_exec(
         "CREATE TABLE IF NOT EXISTS subjects("
         "  id      INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "  code    TEXT NOT NULL UNIQUE,"
+        "  code    TEXT NOT NULL,"
         "  name    TEXT NOT NULL,"
         "  type_id INTEGER NOT NULL REFERENCES subject_types(id),"
         "  credit  INTEGER NOT NULL DEFAULT 0,"
-        "  term    INTEGER NOT NULL DEFAULT 0"
+        "  term    INTEGER NOT NULL DEFAULT 0,"
+        "  UNIQUE(code, type_id)"
         ");"
     );
     db_exec(
@@ -262,7 +263,7 @@ void DB_LoadScores_Test(void)
     sqlite3_stmt *stmt = NULL;
     sqlite3_prepare_v2(gDB,
         "UPDATE subject_scores SET score_letter=?,mid=?,final=?,pass=?,ever_studied=?"
-        " WHERE subject_id=(SELECT id FROM subjects WHERE code=?);",
+        " WHERE subject_id IN (SELECT id FROM subjects WHERE code=?);",
         -1, &stmt, NULL);
 
     char line[512];
@@ -466,7 +467,7 @@ void DB_ReloadData(void)
         sqlite3_prepare_v2(gDB,
             "UPDATE subject_scores"
             "  SET score_letter=?, mid=?, final=?, pass=?, ever_studied=?"
-            "  WHERE subject_id=(SELECT id FROM subjects WHERE code=?);",
+            "  WHERE subject_id IN (SELECT id FROM subjects WHERE code=?);",
             -1, &upd, NULL);
         db_exec("BEGIN;");
         while (sqlite3_step(sel) == SQLITE_ROW) {
@@ -680,7 +681,7 @@ int DB_UpdateScoreRatio(const char *code, float mid_, float final_, int ratio_se
     sqlite3_stmt *stmt = NULL;
     sqlite3_prepare_v2(gDB,
         "UPDATE subject_scores SET score_letter=?,mid=?,final=?,pass=?,ever_studied=?"
-        " WHERE subject_id=(SELECT id FROM subjects WHERE code=?);",
+        " WHERE subject_id IN (SELECT id FROM subjects WHERE code=?);",
         -1, &stmt, NULL);
     sqlite3_bind_text  (stmt, 1, letter, -1, SQLITE_STATIC);
     sqlite3_bind_double(stmt, 2, (double)mid_);
