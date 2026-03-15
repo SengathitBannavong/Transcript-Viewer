@@ -44,6 +44,10 @@
 #define C_RED_BG     ((Clay_Color){ 70,  18,  18, 255})
 #define C_YELLOW     ((Clay_Color){234, 179,   8, 255})
 #define C_YELLOW_BG  ((Clay_Color){ 60,  50,  10, 255})
+#define C_AMETHYST   ((Clay_Color){153, 102, 204, 255})
+#define C_AMETHYST_BG ((Clay_Color){ 52,  36,  76, 255})
+#define C_AMETHYST_LIGHT ((Clay_Color){216, 186, 255, 255})
+#define C_AMETHYST_HOVER ((Clay_Color){ 70,  50, 100, 255})
 #define C_TRANS      ((Clay_Color){  0,   0,   0,   0})
 
 /* ─── Text config helper ─────────────────────────────────────────────── */
@@ -1687,89 +1691,310 @@ static void RenderDashboard(void)
             .layout = {
                 .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
                 .padding         = { 16, 16, 12, 12 },
-                .childGap        = 0,
+                .childGap        = 10,
                 .layoutDirection = CLAY_TOP_TO_BOTTOM,
             },
-            .backgroundColor = C_CARD,
-            .cornerRadius    = CLAY_CORNER_RADIUS(8),
-            .border          = { .color = C_BORDER,
+            .backgroundColor = (Clay_Color){ 22, 27, 34, 255 }, /* #161b22 */
+            .cornerRadius    = CLAY_CORNER_RADIUS(10),
+            .border          = { .color = (Clay_Color){ 38, 48, 61, 255 },
                                  .width = { .left=1,.right=1,.top=1,.bottom=1 } },
         }) {
-            /* header */
-            CLAY(CLAY_ID("DCheckHdr"), {
+            static bool  sDashInit = false;
+            (void)sDashInit;
+
+            if (!sDashInit) {
+                sDashInit = true;
+            }
+
+            const Clay_Color DC_BG          = (Clay_Color){ 13, 17, 23, 255 };   /* #0d1117 */
+            const Clay_Color DC_CARD        = (Clay_Color){ 22, 27, 34, 255 };   /* #161b22 */
+            const Clay_Color DC_BORDER      = (Clay_Color){ 40, 52, 66, 255 };
+            const Clay_Color DC_TEXT        = (Clay_Color){ 230, 237, 243, 255 };
+            const Clay_Color DC_MUTED       = (Clay_Color){ 139, 148, 158, 255 }; /* #8b949e */
+            const Clay_Color DC_AMBER       = (Clay_Color){ 240, 165, 0, 255 };   /* #f0a500 */
+            const Clay_Color DC_AMBER_BG    = (Clay_Color){ 70, 52, 10, 255 };
+            const Clay_Color DC_SUCCESS     = (Clay_Color){ 46, 168, 126, 255 };  /* #2ea87e */
+            const Clay_Color DC_SUCCESS_BG  = (Clay_Color){ 18, 58, 45, 255 };
+            const Clay_Color DC_DANGER      = (Clay_Color){ 224, 92, 92, 255 };   /* #e05c5c */
+            const Clay_Color DC_DANGER_BG   = (Clay_Color){ 72, 28, 28, 255 };
+            const Clay_Color DC_HOVER       = (Clay_Color){ 30, 38, 49, 255 };
+
+            int _miss2[sizeSubjectType];
+            calc_missing_types(&gPlayer, _miss2);
+
+            int done_types = 0;
+            int total_types = 0;
+            int missing_credits_total = 0;
+            int missing_subjects_total = 0;
+
+            int   sec_pass_cr[sizeSubjectType];
+            int   sec_lim_cr[sizeSubjectType];
+            int   sec_fail_sub[sizeSubjectType];
+            int   sec_non_fail_sub[sizeSubjectType];
+            int   sec_missing_sub[sizeSubjectType];
+            int   sec_status[sizeSubjectType]; /* 0 not started, 1 in progress, 2 done */
+            float sec_cpa_all[sizeSubjectType];
+            float sec_cpa_pass[sizeSubjectType];
+
+            for (int t = 1; t < sizeSubjectType; t++) {
+                Subject_Type *st2 = &gPlayer.numofSubjectType[t];
+                if (gTypeName[t][0] == 0 || st2->Total_Subject == 0) continue;
+
+                int pass2 = _sl_resolve_pass(&gPlayer, t);
+                int lim2 = _sl_resolve_limit(&gPlayer, t);
+                if (lim2 <= 0) lim2 = st2->Total_Credit;
+                if (lim2 <= 0) lim2 = 1;
+
+                int pass_subj2 = (int)st2->count_passSubject;
+                int miss_subj2 = st2->Total_Subject - pass_subj2;
+                if (miss_subj2 < 0) miss_subj2 = 0;
+
+                int fail_subj2 = 0;
+                int non_fail_subj2 = 0;
+                for (Subject_Node *sn = st2->head; sn; sn = sn->next) {
+                    bool studied = (sn->status_ever_been_study & 1) != 0;
+                    if (studied && sn->status_pass != 1) fail_subj2++;
+                    else non_fail_subj2++;
+                }
+
+                int status = 1;
+                if (_miss2[t] == 0) status = 2;
+                else if (pass2 <= 0 && pass_subj2 <= 0) status = 0;
+
+                sec_pass_cr[t] = pass2;
+                sec_lim_cr[t] = lim2;
+                sec_fail_sub[t] = fail_subj2;
+                sec_non_fail_sub[t] = non_fail_subj2;
+                sec_missing_sub[t] = miss_subj2;
+                sec_status[t] = status;
+                sec_cpa_all[t] = calc_cpa_type(&gPlayer, t, 0);
+                sec_cpa_pass[t] = calc_cpa_type(&gPlayer, t, 1);
+
+                total_types++;
+                if (_miss2[t] == 0) done_types++;
+
+                if (pass2 < lim2)
+                    missing_credits_total += (lim2 - pass2);
+
+                if (miss_subj2 > 0) missing_subjects_total += miss_subj2;
+            }
+
+            /* Sticky summary bar */
+            CLAY(CLAY_ID("DChkSticky"), {
                 .layout = {
-                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(32) },
-                    .padding         = { 0, 0, 0, 8 },
+                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(92) },
+                    .padding         = { 12, 12, 0, 0 },
                     .childGap        = 12,
                     .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
                     .layoutDirection = CLAY_LEFT_TO_RIGHT,
                 },
-                .border = { .color = C_BORDER, .width = { .bottom = 1 } },
+                .backgroundColor = DC_BG,
+                .cornerRadius    = CLAY_CORNER_RADIUS(10),
+                .border          = { .color = DC_BORDER,
+                                     .width = { .left=1,.right=1,.top=1,.bottom=1 } },
             }) {
-                CLAY_TEXT(CLAY_STRING("Graduation Checklist"), TC(C_TEXT, 12));
-                CLAY(CLAY_ID("DChkSp"), { .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(1) } } }) {}
-                CLAY_TEXT(
-                    DS("%s",  gPlayer.status_can_grauate
-                        ? "All requirements met" : "Requirements pending"),
-                    TC(gPlayer.status_can_grauate ? C_GREEN : C_YELLOW, 10));
-            }
-            /* one row per type */
-            {
-                int _miss2[sizeSubjectType];
-                calc_missing_types(&gPlayer, _miss2);
-                for (int t = 1; t < sizeSubjectType; t++) {
-                    Subject_Type *st2 = &gPlayer.numofSubjectType[t];
-                    if (gTypeName[t][0] == 0 || st2->Total_Subject == 0) continue;
+                float cpa_ratio = cpa_all / 4.f;
+                if (cpa_ratio < 0.f) cpa_ratio = 0.f;
+                if (cpa_ratio > 1.f) cpa_ratio = 1.f;
 
-                    int pass2 = (int)st2->count_passCredit;
-                    int lim2  = _sl_resolve_limit(&gPlayer, t);
-                    bool done = (_miss2[t] == 0);
-                    Clay_Color rowbg = done ? (Clay_Color){16,40,24,255}
-                                            : C_TRANS;
-                    Clay_Color fg2   = done ? C_GREEN : C_SUBTEXT;
-
-                    CLAY(CLAY_IDI("DChkRow", t), {
+                CLAY(CLAY_ID("DChkCPAGauge"), {
+                    .layout = {
+                        .sizing          = { CLAY_SIZING_FIXED(230), CLAY_SIZING_GROW(0) },
+                        .padding         = { 10, 10, 0, 0 },
+                        .childGap        = 4,
+                        .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                    },
+                    .backgroundColor = DC_CARD,
+                    .cornerRadius    = CLAY_CORNER_RADIUS(8),
+                    .border          = { .color = cpa_all >= 2.0f ? DC_SUCCESS : DC_DANGER,
+                                         .width = { .left=2,.right=1,.top=1,.bottom=1 } },
+                }) {
+                    CLAY_TEXT(CLAY_STRING("CPA Gauge"), TC(DC_MUTED, 9));
+                    CLAY_TEXT(DS("%.2f", cpa_all), TC(DC_TEXT, 24));
+                    CLAY(CLAY_ID("DChkCPATrack"), {
                         .layout = {
-                            .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(36) },
-                            .padding         = { 6, 6, 0, 0 },
-                            .childGap        = 10,
-                            .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                            .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(7) },
                             .layoutDirection = CLAY_LEFT_TO_RIGHT,
                         },
-                        .backgroundColor = rowbg,
-                        .border = { .color = C_BORDER, .width = { .bottom=1 } },
+                        .backgroundColor = DC_BORDER,
+                        .cornerRadius    = CLAY_CORNER_RADIUS(4),
                     }) {
-                        /* checkmark box */
-                        CLAY(CLAY_IDI("DChkBox", t), {
+                        CLAY(CLAY_ID("DChkCPAFill"), {
                             .layout = {
-                                .sizing         = { CLAY_SIZING_FIXED(18), CLAY_SIZING_FIXED(18) },
-                                .childAlignment = { .x=CLAY_ALIGN_X_CENTER, .y=CLAY_ALIGN_Y_CENTER },
+                                .sizing = { CLAY_SIZING_PERCENT(cpa_ratio > 0.f ? cpa_ratio : 0.01f), CLAY_SIZING_GROW(0) },
                             },
-                            .backgroundColor = done ? C_GREEN : C_BORDER,
+                            .backgroundColor = cpa_all >= 2.0f ? DC_SUCCESS : DC_DANGER,
                             .cornerRadius    = CLAY_CORNER_RADIUS(4),
-                        }) {
-                            if (done)
-                                CLAY_TEXT(CLAY_STRING("v"), TC(C_WHITE, 9));
-                        }
-                        /* name */
-                        CLAY_TEXT(CS(gTypeName[t]), TC(C_TEXT, 11));
-                        /* spacer */
-                        CLAY(CLAY_IDI("DChkRowSp", t), {
-                            .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(1) } },
                         }) {}
-                        /* credit progress */
-                        CLAY_TEXT(
-                            DS("%d / %d cr", pass2, lim2 > 0 ? lim2 : st2->Total_Credit),
-                            TC(fg2, 10));
-                        /* subjects */
-                        CLAY_TEXT(
-                            DS("%d subj", st2->Total_Subject),
-                            TC(C_SUBTEXT, 9));
-                        /* CPA for this type */
-                        float tcpa = calc_cpa_type(&gPlayer, t, 0);
-                        CLAY_TEXT(
-                            DS("CPA %.2f", tcpa),
-                            TC(tcpa >= 2.0f ? C_ACCENT : C_RED, 9));
+                    }
+                }
+
+                CLAY(CLAY_ID("DChkStickySp"), {
+                    .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(1) } },
+                }) {}
+
+                CLAY(CLAY_ID("DChkRemainCr"), {
+                    .layout = {
+                        .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(36) },
+                        .padding        = { 14, 14, 0, 0 },
+                        .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+                    },
+                    .backgroundColor = missing_credits_total == 0 ? DC_SUCCESS_BG : DC_AMBER_BG,
+                    .cornerRadius    = CLAY_CORNER_RADIUS(18),
+                    .border          = { .color = missing_credits_total == 0 ? DC_SUCCESS : DC_AMBER,
+                                         .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+                }) {
+                    CLAY_TEXT(
+                        missing_credits_total == 0
+                            ? CLAY_STRING("OK 0 credits remaining")
+                            : DS("WARN %d credits remaining", missing_credits_total),
+                        TC(missing_credits_total == 0 ? DC_SUCCESS : DC_AMBER, 10));
+                }
+
+                CLAY(CLAY_ID("DChkRemainSub"), {
+                    .layout = {
+                        .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(36) },
+                        .padding        = { 14, 14, 0, 0 },
+                        .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+                    },
+                    .backgroundColor = missing_subjects_total == 0 ? DC_SUCCESS_BG : DC_AMBER_BG,
+                    .cornerRadius    = CLAY_CORNER_RADIUS(18),
+                    .border          = { .color = missing_subjects_total == 0 ? DC_SUCCESS : DC_AMBER,
+                                         .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+                }) {
+                    CLAY_TEXT(
+                        missing_subjects_total == 0
+                            ? CLAY_STRING("OK 0 subjects remaining")
+                            : DS("WARN %d subjects remaining", missing_subjects_total),
+                        TC(missing_subjects_total == 0 ? DC_SUCCESS : DC_AMBER, 10));
+                }
+            }
+
+            CLAY(CLAY_ID("DChkBody"), {
+                .layout = {
+                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+                    .childGap        = 8,
+                    .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                },
+            }) {
+                /* Section cards (full width) */
+                CLAY(CLAY_ID("DChkMainCol"), {
+                    .layout = {
+                        .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+                        .childGap        = 8,
+                        .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                    },
+                    .clip = { .vertical = true, .childOffset = Clay_GetScrollOffset() },
+                }) {
+                    for (int t = 1; t < sizeSubjectType; t++) {
+                        Subject_Type *st2 = &gPlayer.numofSubjectType[t];
+                        if (gTypeName[t][0] == 0 || st2->Total_Subject == 0) continue;
+
+                        float pct = (float)sec_pass_cr[t] / (float)(sec_lim_cr[t] > 0 ? sec_lim_cr[t] : 1);
+                        if (pct < 0.f) pct = 0.f;
+                        if (pct > 1.f) pct = 1.f;
+
+                        Clay_Color stat_col = sec_status[t] == 2 ? DC_SUCCESS
+                                            : (sec_status[t] == 1 ? DC_AMBER : DC_MUTED);
+
+                        CLAY(CLAY_IDI("DChkSecCard", t), {
+                            .layout = {
+                                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                                .padding         = { 12, 12, 10, 10 },
+                                .childGap        = 8,
+                                .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                            },
+                            .backgroundColor = Clay_Hovered() ? DC_HOVER : DC_CARD,
+                            .cornerRadius    = CLAY_CORNER_RADIUS(8),
+                            .border          = { .color = DC_BORDER,
+                                                 .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+                        }) {
+                            CLAY(CLAY_IDI("DChkSecTop", t), {
+                                .layout = {
+                                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                                    .childGap        = 8,
+                                    .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                                    .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                                },
+                            }) {
+                                CLAY_TEXT(CS(gTypeName[t]), TC(DC_TEXT, 12));
+
+                                CLAY(CLAY_IDI("DChkSecTopSp", t), {
+                                    .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(1) } },
+                                }) {}
+
+                                CLAY(CLAY_IDI("DChkSecFail", t), {
+                                    .layout = {
+                                        .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(32) },
+                                        .padding        = { 8, 8, 2, 2 },
+                                        .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+                                    },
+                                    .backgroundColor = DC_DANGER_BG,
+                                    .cornerRadius    = CLAY_CORNER_RADIUS(11),
+                                }) {
+                                    CLAY_TEXT(DS("FAIL %d", sec_fail_sub[t]), TC(DC_DANGER, 8));
+                                }
+
+                                CLAY(CLAY_IDI("DChkSecOk", t), {
+                                    .layout = {
+                                        .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(32) },
+                                        .padding        = { 8, 8, 2, 2 },
+                                        .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+                                    },
+                                    .backgroundColor = DC_SUCCESS_BG,
+                                    .cornerRadius    = CLAY_CORNER_RADIUS(11),
+                                }) {
+                                    CLAY_TEXT(DS("PASS %d", sec_non_fail_sub[t]), TC(DC_SUCCESS, 8));
+                                }
+
+                                CLAY(CLAY_IDI("DChkSecCPA", t), {
+                                    .layout = {
+                                        .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(32) },
+                                        .padding        = { 8, 8, 2, 2 },
+                                        .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+                                    },
+                                    .backgroundColor = DC_BG,
+                                    .cornerRadius    = CLAY_CORNER_RADIUS(11),
+                                    .border          = { .color = DC_BORDER,
+                                                         .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+                                }) {
+                                    CLAY_TEXT(DS("CPA %.2f", sec_cpa_all[t]), TC(sec_cpa_all[t] >= 2.0f ? DC_SUCCESS : DC_DANGER, 8));
+                                }
+                            }
+
+                            CLAY(CLAY_IDI("DChkSecProgLbl", t), {
+                                .layout = {
+                                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                                    .childGap        = 8,
+                                    .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                                    .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                                },
+                            }) {
+                                CLAY_TEXT(DS("Credits %d/%d", sec_pass_cr[t], sec_lim_cr[t]), TC(DC_TEXT, 9));
+                                CLAY(CLAY_IDI("DChkSecProgSp", t), {
+                                    .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(1) } },
+                                }) {}
+                                CLAY_TEXT(DS("Remaining %d cr | %d subj", sec_lim_cr[t] > sec_pass_cr[t] ? (sec_lim_cr[t] - sec_pass_cr[t]) : 0, sec_missing_sub[t]), TC(DC_AMBER, 9));
+                                CLAY_TEXT(DS("CPA pass %.2f", sec_cpa_pass[t]), TC(DC_MUTED, 9));
+                            }
+
+                            CLAY(CLAY_IDI("DChkSecProgTrack", t), {
+                                .layout = {
+                                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(8) },
+                                    .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                                },
+                                .backgroundColor = DC_BORDER,
+                                .cornerRadius    = CLAY_CORNER_RADIUS(4),
+                            }) {
+                                CLAY(CLAY_IDI("DChkSecProgFill", t), {
+                                    .layout = {
+                                        .sizing = { CLAY_SIZING_PERCENT(pct > 0.f ? pct : 0.01f), CLAY_SIZING_GROW(0) },
+                                    },
+                                    .backgroundColor = stat_col,
+                                    .cornerRadius    = CLAY_CORNER_RADIUS(4),
+                                }) {}
+                            }
+                        }
                     }
                 }
             }
