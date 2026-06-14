@@ -40,6 +40,42 @@
 
 static sqlite3 *gDB = NULL;
 
+/* ── Web persistence (IDBFS) ─────────────────────────────────────────────
+ * On the desktop the SQLite file lives on disk and survives on its own. In a
+ * deployed WebAssembly build the working directory is emscripten's in-memory
+ * MEMFS, which is wiped on every page reload. To keep transcripts we mount an
+ * IndexedDB-backed filesystem (IDBFS) at /persist, store the .db there, load it
+ * once at startup, and flush it back after each write. */
+#if defined(PLATFORM_WEB)
+#include <emscripten.h>
+#define DB_PERSIST_DIR "/persist"
+
+/* Mount IDBFS and pull any previously-saved DB from IndexedDB into the FS.
+ * Blocks (via ASYNCIFY) until the load finishes, so it MUST run before the
+ * first DB_Exists()/DB_Open(). */
+static void DB_PersistInit(void)
+{
+    EM_ASM({
+        var dir = UTF8ToString($0);
+        try { FS.mkdir(dir); } catch (e) {}      /* ignore "already exists" */
+        FS.mount(IDBFS, {}, dir);
+        Module.__dbSyncDone = 0;
+        FS.syncfs(true, function (err) { Module.__dbSyncDone = 1; });
+    }, DB_PERSIST_DIR);
+    while (!EM_ASM_INT({ return Module.__dbSyncDone; }))
+        emscripten_sleep(30);
+}
+
+/* Flush the FS back to IndexedDB (fire-and-forget). */
+static void DB_Persist(void)
+{
+    EM_ASM({ FS.syncfs(false, function (err) {}); });
+}
+#else
+static inline void DB_PersistInit(void) {}
+static inline void DB_Persist(void)     {}
+#endif
+
 /* ── helpers ─────────────────────────────────────────────────────────── */
 static void db_exec(const char *sql)
 {
@@ -75,7 +111,11 @@ static int db_is_pass(const char *l)
 /* Build path "db_<username>.db" into buf (max bufsz) */
 static void db_path(const char *username, char *buf, int bufsz)
 {
+#if defined(PLATFORM_WEB)
+    snprintf(buf, bufsz, DB_PERSIST_DIR "/db_%s.db", username);
+#else
     snprintf(buf, bufsz, "db_%s.db", username);
+#endif
 }
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -103,7 +143,12 @@ int DB_Open(const char *username)
                 path, sqlite3_errmsg(gDB));
         return 0;
     }
+#if defined(PLATFORM_WEB)
+    /* DELETE keeps all data in the single .db file so IDBFS persists it cleanly. */
+    db_exec("PRAGMA journal_mode=DELETE;");
+#else
     db_exec("PRAGMA journal_mode=WAL;");
+#endif
     db_exec("PRAGMA foreign_keys=ON;");
     return 1;
 }
@@ -497,6 +542,7 @@ void DB_ReloadData(void)
     memset(gTypeName, 0, sizeof(gTypeName));
     DB_LoadGradRules();
     DB_ValidateData();
+    DB_Persist();   /* web: flush rebuilt DB to IndexedDB */
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -690,7 +736,9 @@ int DB_UpdateScoreRatio(const char *code, float mid_, float final_, int ratio_se
     sqlite3_bind_text  (stmt, 6, code, -1, SQLITE_TRANSIENT);
     int rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
-    return (rc == SQLITE_DONE) ? sqlite3_changes(gDB) : 0;
+    int changed = (rc == SQLITE_DONE) ? sqlite3_changes(gDB) : 0;
+    if (changed) DB_Persist();   /* web: flush to IndexedDB */
+    return changed;
 }
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -728,7 +776,81 @@ int DB_SubjectExists(const char *code)
  * ───────────────────────────────────────────────────────────────────── */
 void DB_Close(void)
 {
-    if(gDB){ sqlite3_close(gDB); gDB=NULL; }
+    if(gDB){ sqlite3_close(gDB); gDB=NULL; DB_Persist(); }
 }
+
+/* ─────────────────────────────────────────────────────────────────────
+ * Web import/export of the .db file.
+ *   DB_ExportDownload — push the current DB to the browser as a download.
+ *   DB_ImportPick      — open a file picker; chosen file is written to the FS
+ *                        asynchronously (poll DB_ImportPoll for completion).
+ *   DB_ImportPoll      — 1 = imported & reopened, -1 = error/cancel, 0 = idle.
+ * No-ops on desktop, where the .db is just a normal file on disk.
+ * ───────────────────────────────────────────────────────────────────── */
+#if defined(PLATFORM_WEB)
+static void DB_ExportDownload(const char *username)
+{
+    char path[128], fname[140];
+    db_path(username, path, sizeof(path));
+    snprintf(fname, sizeof(fname), "db_%s.db", username);
+    DB_Persist();   /* ensure the newest committed state is on the FS */
+    EM_ASM({
+        var path = UTF8ToString($0);
+        var name = UTF8ToString($1);
+        try {
+            var data = FS.readFile(path);
+            var blob = new Blob([data], { type: 'application/x-sqlite3' });
+            var url  = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url; a.download = name;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            setTimeout(function () { URL.revokeObjectURL(url); }, 0);
+        } catch (e) { console.error('DB export failed:', e); }
+    }, path, fname);
+}
+
+static void DB_ImportPick(const char *username)
+{
+    char path[128];
+    db_path(username, path, sizeof(path));
+    EM_ASM({
+        var path = UTF8ToString($0);
+        Module.__dbImport = 1;   /* pending */
+        var input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.db';
+        input.onchange = function (e) {
+            var file = e.target.files && e.target.files[0];
+            if (!file) { Module.__dbImport = 3; return; }
+            var reader = new FileReader();
+            reader.onload  = function () {
+                try { FS.writeFile(path, new Uint8Array(reader.result)); Module.__dbImport = 2; }
+                catch (err) { console.error(err); Module.__dbImport = 3; }
+            };
+            reader.onerror = function () { Module.__dbImport = 3; };
+            reader.readAsArrayBuffer(file);
+        };
+        input.click();
+    }, path);
+}
+
+static int DB_ImportPoll(const char *username)
+{
+    int st = EM_ASM_INT({
+        var v = Module.__dbImport || 0;
+        if (v == 2 || v == 3) Module.__dbImport = 0;   /* consume terminal state */
+        return v;
+    });
+    if (st == 2) {
+        DB_Close();
+        if (!DB_Open(username)) return -1;
+        DB_CreateSchema();        /* tolerate older/partial files */
+        DB_LoadGradRules();
+        DB_Persist();             /* save the imported DB into IndexedDB */
+        return 1;
+    }
+    return (st == 3) ? -1 : 0;
+}
+#endif /* PLATFORM_WEB */
 
 #endif /* DB_H */

@@ -228,6 +228,56 @@ static void RenderSidebar(void)
             .backgroundColor = C_BORDER,
         }) {}
 
+#if defined(PLATFORM_WEB)
+        /* ── DB export / import ──────────────────────────────────────────
+         * The web build keeps the database inside this browser. These let the
+         * user save a portable .db file or load one (e.g. to move devices). */
+        CLAY(CLAY_ID("DBIO"), {
+            .layout = {
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(32) },
+                .childGap        = 6,
+                .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                .layoutDirection = CLAY_LEFT_TO_RIGHT,
+            },
+        }) {
+            /* Export → browser download */
+            CLAY(CLAY_ID("DBExport"), {
+                .layout = {
+                    .sizing         = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(30) },
+                    .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+                },
+                .backgroundColor = Clay_Hovered() ? (Clay_Color){38,98,61,255} : C_CARD,
+                .cornerRadius    = CLAY_CORNER_RADIUS(5),
+                .border          = { .color = C_BORDER,
+                                     .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+            }) {
+                if (gDBReady && Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                    DB_ExportDownload(gUserName);
+                    snprintf(gResultMsg, sizeof(gResultMsg),
+                             "Downloading db_%s.db", gUserName);
+                    gHasResult       = true;
+                    gResultShowUntil = (float)GetTime() + 4.f;
+                }
+                CLAY_TEXT(CLAY_STRING("Export .db"), TC(C_TEXT, 10));
+            }
+            /* Import ← file picker */
+            CLAY(CLAY_ID("DBImport"), {
+                .layout = {
+                    .sizing         = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(30) },
+                    .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+                },
+                .backgroundColor = Clay_Hovered() ? C_ACCENT_DIM : C_CARD,
+                .cornerRadius    = CLAY_CORNER_RADIUS(5),
+                .border          = { .color = C_BORDER,
+                                     .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+            }) {
+                if (gDBReady && Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
+                    DB_ImportPick(gUserName);
+                CLAY_TEXT(CLAY_STRING("Import .db"), TC(C_TEXT, 10));
+            }
+        }
+#endif
+
         /* user card */
         CLAY(CLAY_ID("UserCard"), {
             .layout = {
@@ -846,6 +896,7 @@ static void calc_grade_counts(int out[9])
 {
     for (int i = 0; i < 9; i++) out[i] = 0;
     for (int t = 1; t < sizeSubjectType; t++) {
+        if (t == the_thao) continue;  /* sport scores excluded from grade distribution */
         Subject_Node *n = gPlayer.numofSubjectType[t].head;
         while (n) {
             if (n->status_ever_been_study & 1) {
@@ -873,6 +924,7 @@ static void RenderDashboard(void)
     int cnt_A=0, cnt_B=0, cnt_C=0, cnt_D=0, cnt_F=0, cnt_X=0;
     int total_studied = 0;
     for (int t = 1; t < sizeSubjectType; t++) {
+        if (t == the_thao) continue;  /* sport scores excluded from grade distribution */
         Subject_Node *n = gPlayer.numofSubjectType[t].head;
         while (n) {
             if (n->status_ever_been_study & 1) {
