@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>Transcript Viewer</title>
+  <style>
+    html, body {
+      margin: 0; padding: 0;
+      width: 100%; height: 100%;
+      overflow: hidden;
+      background: #1b1a17;            /* matches the app paper-dark background */
+    }
+    canvas.app {
+      display: block;
+      width: 100vw; height: 100vh;
+      border: 0;
+      outline: none;
+    }
+    #status {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-family: system-ui, sans-serif; font-size: 15px;
+      color: #b4ac9e; background: #1b1a17;
+      transition: opacity .3s ease;
+    }
+  </style>
+</head>
+<body>
+  <canvas class="app" id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
+  <div id="status">Loading Transcript Viewer…</div>
+
+  <script>
+    var statusEl = document.getElementById('status');
+    var Module = {
+      canvas: document.getElementById('canvas'),
+      print:    function (t) { console.log(t); },
+      printErr: function (t) { console.error(t); },
+      setStatus: function (text) {
+        if (!statusEl) return;
+        statusEl.textContent = text;
+        if (!text) { statusEl.style.opacity = '0'; statusEl.style.pointerEvents = 'none'; }
+      },
+      onRuntimeInitialized: function () {
+        Module.setStatus('');
+        /* make raylib size the framebuffer to the window once it is up */
+        setTimeout(function () { window.dispatchEvent(new Event('resize')); }, 0);
+      }
+    };
+    window.onerror = function () { Module.setStatus('Something went wrong — see the console.'); };
+  </script>
+  {{{ SCRIPT }}}
+</body>
+</html>

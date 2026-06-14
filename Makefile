@@ -53,9 +53,11 @@ WEB_CFLAGS  = -Os -Wall -Wno-missing-braces -DPLATFORM_WEB \
               -I$(RAYLIB_WEB)/include -I$(SRCDIR) -I.
 # USE_GLFW=3 + ASYNCIFY are raylib's required web flags; preload the data files
 # the app fopen()s at runtime into emscripten's virtual filesystem.
+WEB_SHELL   = src/web/shell.html
 WEB_LDFLAGS = $(WEB_RAYLIB_LIB) $(SQLITE_WEB_OBJ) \
               -s USE_GLFW=3 -s ASYNCIFY -s ALLOW_MEMORY_GROWTH=1 -s FORCE_FILESYSTEM=1 \
-              -lidbfs.js --preload-file assets --preload-file Font -lm
+              -lidbfs.js --shell-file $(WEB_SHELL) \
+              --preload-file assets --preload-file Font -lm
 
 .PHONY: all linux clean setup test web web-setup web-serve web-clean
 
