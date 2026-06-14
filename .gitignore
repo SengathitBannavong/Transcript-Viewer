@@ -2,3 +2,9 @@
 /Font
 /raylib*
 *.db
+
+# Downloaded SQLite amalgamation + compiled objects (fetched by `make`)
+sqlite3.c
+sqlite3.h
+sqlite3.o
+sqlite3.web.o

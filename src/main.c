@@ -31,6 +31,10 @@
 #include <stdarg.h>
 #include <math.h>
 
+#if defined(PLATFORM_WEB)
+#include <emscripten/emscripten.h>  /* WebAssembly build drives the frame loop */
+#endif
+
 /* --- Window constants ------------------------------------------------- */
 #define WIN_W  1400
 #define WIN_H   820
@@ -126,6 +130,7 @@ static void InitPlayerDB(void)
     RefreshPlayer();
     gDBReady   = true;
     gNameInput = false;
+    DB_Persist();   /* web: persist a freshly seeded DB right away */
     char title[64];
     snprintf(title, sizeof(title), "Transcript Viewer  --  %s", gUserName);
     SetWindowTitle(title);
@@ -271,6 +276,10 @@ static void HandleClayError(Clay_ErrorData err)
 }
 
 /* --- Entry point ------------------------------------------------------- */
+/* One frame of update + render. Defined after main(); on web it is invoked
+ * by emscripten's requestAnimationFrame loop, on desktop by the while-loop. */
+static void UpdateDrawFrame(void);
+
 int main(void)
 {
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT);
@@ -372,8 +381,30 @@ int main(void)
     Clay_SetMeasureTextFunction(Raylib_MeasureText, gFonts);
     Clay_SetDebugModeEnabled(false);  /* F1 toggles at runtime */
 
-    /* Main loop */
-    while (!WindowShouldClose()) {
+    /* Web: mount IndexedDB-backed storage and load any saved DB before the
+     * user can open one. No-op on desktop. */
+    DB_PersistInit();
+
+    /* Main loop — the per-frame body lives in UpdateDrawFrame() so the
+     * WebAssembly build can let the browser drive it one frame at a time. */
+#if defined(PLATFORM_WEB)
+    emscripten_set_main_loop(UpdateDrawFrame, 0, 1);  /* never returns */
+#else
+    while (!WindowShouldClose())
+        UpdateDrawFrame();
+
+    if (gCustomFont) UnloadFont(gFonts[0]);
+    free(mem);
+    DB_Close();
+    Clay_Raylib_Close();
+#endif
+    return 0;
+}
+
+/* ── Per-frame update + render ─────────────────────────────────────────── */
+static void UpdateDrawFrame(void)
+{
+    {
         gScreenW = GetScreenWidth();
         gScreenH = GetScreenHeight();
 
@@ -383,10 +414,27 @@ int main(void)
             IsMouseButtonDown(MOUSE_LEFT_BUTTON));
         Clay_UpdateScrollContainers(
             true,
-            (Clay_Vector2){ 0.f, -GetMouseWheelMove() * 50.f },
+            (Clay_Vector2){ 0.f, GetMouseWheelMove() * 50.f },
             GetFrameTime());
 
         HandleKeyboard();
+
+#if defined(PLATFORM_WEB)
+        /* Finish an async .db import once the browser has written the file. */
+        if (gDBReady) {
+            int imp = DB_ImportPoll(gUserName);
+            if (imp == 1) {
+                RefreshPlayer();
+                snprintf(gResultMsg, sizeof(gResultMsg),
+                         "Imported database for %s", gUserName);
+                gHasResult = true; gResultShowUntil = (float)GetTime() + 5.f;
+            } else if (imp == -1) {
+                snprintf(gResultMsg, sizeof(gResultMsg),
+                         "Import failed or cancelled");
+                gHasResult = true; gResultShowUntil = (float)GetTime() + 5.f;
+            }
+        }
+#endif
 
         /* expire toast */
         if (gHasResult && (float)GetTime() >= gResultShowUntil)
@@ -591,10 +639,4 @@ int main(void)
                    (Color){ 122, 116, 104, 150 });
         EndDrawing();
     }
-
-    if (gCustomFont) UnloadFont(gFonts[0]);
-    free(mem);
-    DB_Close();
-    Clay_Raylib_Close();
-    return 0;
 }
