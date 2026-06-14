@@ -1334,6 +1334,25 @@ static void RenderDashboard(void)
  *  ROW EDIT POPUP
  * ═══════════════════════════════════════════════════════════════════════ */
 
+/* ── "Final needed" planner helpers ──────────────────────────────────────
+ * Inverts db_compute_letter_r(): given the midterm and the mid/final weight
+ * ratio, what final score reaches each grade band?  needed = (thr - rm*mid)/rf.
+ * Pass bands only, ordered high → low so the first secured band found is the
+ * best one locked in. Band index here matches grade_band_color() 0..7. */
+static const struct { const char *name; float threshold; } kPlanBands[8] = {
+    { "A+", 9.0f }, { "A", 8.5f }, { "B+", 8.0f }, { "B", 7.0f },
+    { "C+", 6.5f }, { "C", 5.5f }, { "D+", 5.0f }, { "D", 4.0f },
+};
+
+static void plan_ratio_weights(int ratio, float *rm, float *rf)
+{
+    switch (ratio) {
+        case 1:  *rm = 0.5f; *rf = 0.5f; break;   /* 50 / 50 */
+        case 2:  *rm = 0.4f; *rf = 0.6f; break;   /* 40 / 60 */
+        default: *rm = 0.3f; *rf = 0.7f; break;   /* 30 / 70 */
+    }
+}
+
 static void RenderEditPopup(void)
 {
     static const char *ratio_labels[4] = { "", "50 / 50", "40 / 60", "30 / 70" };
@@ -1509,6 +1528,76 @@ static void RenderEditPopup(void)
                             gEditRatio = r;
                         CLAY_TEXT(DS("%s", ratio_labels[r]),
                                   TC(sel ? C_WHITE : C_TEXT, 10));
+                    }
+                }
+            }
+
+            /* ── "What you need on the final" planner ──────────────────── */
+            CLAY(CLAY_ID("EditPlan"), {
+                .layout = {
+                    .sizing          = { CLAY_SIZING_FIXED(480), CLAY_SIZING_FIT(0) },
+                    .padding         = { 14, 14, 12, 12 },
+                    .childGap        = 7,
+                    .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                },
+                .backgroundColor = C_TBL_HDR,
+                .cornerRadius    = CLAY_CORNER_RADIUS(8),
+                .border          = { .color = C_BORDER,
+                                     .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+            }) {
+                CLAY_TEXT(CLAY_STRING("WHAT YOU NEED ON THE FINAL"), TC(C_SUBTEXT, 9));
+
+                float midv = (gEditMidLen > 0) ? (float)atof(gEditMidBuf) : -1.f;
+                float rm, rf;
+                plan_ratio_weights(gEditRatio, &rm, &rf);
+
+                if (midv < 0.f || midv > 10.f) {
+                    CLAY_TEXT(CLAY_STRING("Enter your midterm score to see what you need."),
+                              TC(C_SUBTEXT, 10));
+                } else {
+                    int shown = 0, highestSecured = -1;
+                    for (int b = 0; b < 8; b++) {
+                        float need = (kPlanBands[b].threshold - rm * midv) / rf;
+                        if (need <= 0.f) {              /* already locked in */
+                            if (highestSecured < 0) highestSecured = b;
+                            continue;
+                        }
+                        if (need > 10.f) continue;     /* out of reach */
+                        float disp = ceilf(need * 10.f) / 10.f;  /* round up to 0.1 */
+
+                        CLAY(CLAY_IDI("PlanRow", b), {
+                            .layout = {
+                                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(24) },
+                                .childGap        = 10,
+                                .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                                .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                            },
+                        }) {
+                            CLAY(CLAY_IDI("PlanChip", b), {
+                                .layout = {
+                                    .sizing         = { CLAY_SIZING_FIXED(32), CLAY_SIZING_FIXED(18) },
+                                    .childAlignment = { .x = CLAY_ALIGN_X_CENTER,
+                                                        .y = CLAY_ALIGN_Y_CENTER },
+                                },
+                                .backgroundColor = grade_band_color(b),
+                                .cornerRadius    = CLAY_CORNER_RADIUS(4),
+                            }) {
+                                CLAY_TEXT(DS("%s", kPlanBands[b].name), TC(C_WHITE, 9));
+                            }
+                            CLAY_TEXT(DS("need  %.1f  on the final", disp), TC(C_TEXT, 11));
+                        }
+                        shown++;
+                    }
+
+                    if (shown == 0) {
+                        if (highestSecured >= 0)
+                            CLAY_TEXT(DS("Locked in: at least %s",
+                                         kPlanBands[highestSecured].name),
+                                      TC(C_GREEN, 11));
+                        float needAplus = (9.0f - rm * midv) / rf;
+                        if (needAplus > 10.f)
+                            CLAY_TEXT(CLAY_STRING("A+ needs > 10 — out of reach"),
+                                      TC(C_SUBTEXT, 10));
                     }
                 }
             }
