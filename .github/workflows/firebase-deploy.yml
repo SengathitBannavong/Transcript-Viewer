@@ -1,0 +1,65 @@
+name: Deploy Web (Firebase Hosting)
+
+# Builds the WebAssembly app (`make web`) and deploys the static output in
+# bin/web/ to Firebase Hosting.
+#
+# ── One-time setup ──────────────────────────────────────────────────────────
+#   1. Create a Firebase project (https://console.firebase.google.com) and run
+#      `firebase init hosting` locally once, OR just edit .firebaserc and set
+#      "default" to your project id.
+#   2. Create a service account key with the "Firebase Hosting Admin" role:
+#        Firebase console → Project settings → Service accounts →
+#        "Generate new private key"  (downloads a JSON file).
+#   3. In this repo: Settings → Secrets and variables → Actions →
+#        - New repository SECRET  FIREBASE_SERVICE_ACCOUNT  = <paste the JSON>
+#   4. Make sure .firebaserc has your real project id (replaces the placeholder).
+# ----------------------------------------------------------------------------
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-deploy:
+    name: Build wasm & deploy to Firebase
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y make curl unzip
+
+      - name: Set up emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.64
+          actions-cache-folder: emsdk-cache
+
+      - name: Provide a font (Font/ is gitignored)
+        # The web build preloads Font/ into the wasm virtual filesystem, so at
+        # least one font from assets/fonts.cfg must exist at build time.
+        run: |
+          mkdir -p Font/Space_Mono
+          curl -fsSL \
+            "https://github.com/google/fonts/raw/main/ofl/spacemono/SpaceMono-Bold.ttf" \
+            -o Font/Space_Mono/SpaceMono-Bold.ttf
+
+      - name: Build static web bundle
+        run: make web
+
+      - name: Show build output
+        run: ls -la bin/web
+
+      - name: Deploy to Firebase Hosting (live channel)
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          projectId: default
+          channelId: live
