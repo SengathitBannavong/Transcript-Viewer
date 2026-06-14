@@ -459,6 +459,28 @@ void DB_LoadGradRules(void)
 void DB_ValidateData(void);
 
 /* ─────────────────────────────────────────────────────────────────────────
+ * DB_ApplyMinPassRule — bring already-stored grades in line with the
+ *   per-component minimum (mid AND final >= MIN_PASS_SCORE, else F).
+ *
+ *   Stored letters are NOT recomputed on load/reload, so a subject graded
+ *   before this rule existed could keep a passing letter despite a sub-3
+ *   component. This flips those rows to F. It is ratio-independent (the F
+ *   rule never depends on the mid/final weighting) and idempotent — safe to
+ *   run on every startup and after every reload.
+ * ───────────────────────────────────────────────────────────────────────── */
+void DB_ApplyMinPassRule(void)
+{
+    char sql[256];
+    snprintf(sql, sizeof(sql),
+        "UPDATE subject_scores SET score_letter='F', pass=0 "
+        "WHERE ever_studied=1 AND score_letter<>'F' "
+        "AND (mid < %.1f OR final < %.1f);",
+        (double)MIN_PASS_SCORE, (double)MIN_PASS_SCORE);
+    db_exec(sql);
+    if (sqlite3_changes(gDB) > 0) DB_Persist();   /* web: persist the fix */
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
  * DB_ReloadData — full wipe-and-reseed of subject + rule tables.
  *
  *   Strategy (preserves existing scores):
@@ -542,6 +564,10 @@ void DB_ReloadData(void)
         sqlite3_finalize(upd);
     }
     db_exec("DROP TABLE IF EXISTS _reload_scores;");
+
+    /* restored letters are taken from the snapshot as-is — re-apply the
+     * per-component minimum so reload can't bring back stale passing grades */
+    DB_ApplyMinPassRule();
 
     /* ── 5. Refresh in-RAM state ─────────────────────────────────────── */
     memset(gTypeName, 0, sizeof(gTypeName));

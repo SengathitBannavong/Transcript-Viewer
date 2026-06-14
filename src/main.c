@@ -121,6 +121,7 @@ static void InitPlayerDB(void)
     }
     DB_SeedGradRules();   /* INSERT OR IGNORE — safe for existing DBs too */
     DB_LoadGradRules();
+    DB_ApplyMinPassRule();/* migrate pre-rule grades: sub-3 mid/final → F */
     DB_ValidateData();
     /* Auto-reload: if validation found problems, re-parse the asset files so
      * that any fixes the user made since the last run are picked up.       */
