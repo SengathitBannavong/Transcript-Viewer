@@ -1554,14 +1554,19 @@ static void RenderEditPopup(void)
                 if (midv < 0.f || midv > 10.f) {
                     CLAY_TEXT(CLAY_STRING("Enter your midterm score to see what you need."),
                               TC(C_SUBTEXT, 10));
+                } else if (midv < MIN_PASS_SCORE) {
+                    /* mid below the per-component floor → unpassable */
+                    CLAY_TEXT(DS("Midterm %.1f is below %.0f \xE2\x80\x94 automatic F.",
+                                 midv, MIN_PASS_SCORE),
+                              TC(C_RED, 11));
+                    CLAY_TEXT(CLAY_STRING("No final score can pass this subject."),
+                              TC(C_SUBTEXT, 10));
                 } else {
-                    int shown = 0, highestSecured = -1;
+                    int shown = 0;
                     for (int b = 0; b < 8; b++) {
                         float need = (kPlanBands[b].threshold - rm * midv) / rf;
-                        if (need <= 0.f) {              /* already locked in */
-                            if (highestSecured < 0) highestSecured = b;
-                            continue;
-                        }
+                        /* the final must also clear the per-component floor */
+                        if (need < MIN_PASS_SCORE) need = MIN_PASS_SCORE;
                         if (need > 10.f) continue;     /* out of reach */
                         float disp = ceilf(need * 10.f) / 10.f;  /* round up to 0.1 */
 
@@ -1589,16 +1594,9 @@ static void RenderEditPopup(void)
                         shown++;
                     }
 
-                    if (shown == 0) {
-                        if (highestSecured >= 0)
-                            CLAY_TEXT(DS("Locked in: at least %s",
-                                         kPlanBands[highestSecured].name),
-                                      TC(C_GREEN, 11));
-                        float needAplus = (9.0f - rm * midv) / rf;
-                        if (needAplus > 10.f)
-                            CLAY_TEXT(CLAY_STRING("A+ needs > 10 — out of reach"),
-                                      TC(C_SUBTEXT, 10));
-                    }
+                    if (shown == 0)
+                        CLAY_TEXT(CLAY_STRING("Even a perfect final can't pass this subject."),
+                                  TC(C_SUBTEXT, 10));
                 }
             }
         }

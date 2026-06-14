@@ -86,10 +86,15 @@ static void db_exec(const char *sql)
     }
 }
 
+/* Each component (mid AND final) must reach this score, or the subject is an
+ * automatic F regardless of the weighted average. */
+#define MIN_PASS_SCORE 3.0f
+
 /* Compute letter grade with explicit mid/final weight ratio */
 static const char *db_compute_letter_r(float mid, float final_, float rm, float rf)
 {
-    if (mid == 0.f && final_ == 0.f) return "X";
+    if (mid == 0.f && final_ == 0.f) return "X";       /* not studied yet */
+    if (mid < MIN_PASS_SCORE || final_ < MIN_PASS_SCORE) return "F";
     float g = rm * mid + rf * final_;
     if (g >= 9.0f) return "A+";
     if (g >= 8.5f) return "A";
