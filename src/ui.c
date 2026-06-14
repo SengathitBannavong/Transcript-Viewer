@@ -17,31 +17,45 @@
  */
 
 /* ─── Layout constants ───────────────────────────────────────────────── */
-#define SIDEBAR_W   210
+#define SIDEBAR_W   248
 #define ROW_H        44
 #define HDR_H        42
 
-/* ─── Colors ─────────────────────────────────────────────────────────── */
-#define C_BG         ((Clay_Color){ 11,  11,  20, 255})
-#define C_SIDEBAR    ((Clay_Color){ 15,  15,  28, 255})
-#define C_CARD       ((Clay_Color){ 20,  20,  38, 255})
-#define C_TBL_HDR    ((Clay_Color){ 25,  25,  46, 255})
-#define C_ROW_ODD    ((Clay_Color){ 18,  18,  34, 255})
-#define C_ROW_EVEN   ((Clay_Color){ 15,  15,  28, 255})
-#define C_ROW_HOVER  ((Clay_Color){ 32,  32,  64, 255})
-#define C_BORDER     ((Clay_Color){ 36,  36,  68, 255})
-#define C_ACCENT     ((Clay_Color){ 99, 102, 241, 255})
-#define C_ACCENT_DIM ((Clay_Color){ 50,  52, 130, 255})
-#define C_ACCENT_BG  ((Clay_Color){ 22,  23,  58, 255})
-#define C_TEXT       ((Clay_Color){224, 224, 242, 255})
-#define C_SUBTEXT    ((Clay_Color){110, 110, 155, 255})
-#define C_WHITE      ((Clay_Color){255, 255, 255, 255})
-#define C_GREEN      ((Clay_Color){ 34, 197,  94, 255})
-#define C_GREEN_BG   ((Clay_Color){ 16,  60,  36, 255})
-#define C_RED        ((Clay_Color){239,  68,  68, 255})
-#define C_RED_BG     ((Clay_Color){ 70,  18,  18, 255})
-#define C_YELLOW     ((Clay_Color){234, 179,   8, 255})
-#define C_YELLOW_BG  ((Clay_Color){ 60,  50,  10, 255})
+/* ─── Spacing scale ──────────────────────────────────────────────────────
+ * One scale, used deliberately: tight gaps bind a group, generous gaps
+ * separate sections. Rhythm comes from choosing, not from a single value.
+ * ──────────────────────────────────────────────────────────────────────── */
+#define SP_XS   4
+#define SP_SM   8
+#define SP_MD  14
+#define SP_LG  22
+#define SP_XL  32
+
+/* ─── Colors — Academic "paper" theme ────────────────────────────────────
+ * Warm paper surface + ink + one committed scholarly accent (oxblood).
+ * Every neutral is tinted warm; no pure #000 / #fff. Grade colors are a
+ * muted semantic ramp that reads on a light page (not neon).
+ * ──────────────────────────────────────────────────────────────────────── */
+#define C_BG         ((Clay_Color){241, 237, 229, 255})  /* warm paper page   */
+#define C_SIDEBAR    ((Clay_Color){234, 229, 219, 255})  /* deeper paper edge */
+#define C_CARD       ((Clay_Color){250, 248, 243, 255})  /* raised panel      */
+#define C_TBL_HDR    ((Clay_Color){236, 231, 221, 255})  /* header band       */
+#define C_ROW_ODD    ((Clay_Color){247, 244, 238, 255})  /* ledger stripe     */
+#define C_ROW_EVEN   ((Clay_Color){252, 250, 246, 255})
+#define C_ROW_HOVER  ((Clay_Color){244, 230, 227, 255})  /* pale crimson wash */
+#define C_BORDER     ((Clay_Color){221, 214, 201, 255})  /* hairline rule     */
+#define C_ACCENT     ((Clay_Color){140,  47,  42, 255})  /* oxblood crimson   */
+#define C_ACCENT_DIM ((Clay_Color){176,  92,  86, 255})  /* faded crimson     */
+#define C_ACCENT_BG  ((Clay_Color){243, 228, 225, 255})  /* pale crimson wash */
+#define C_TEXT       ((Clay_Color){ 27,  26,  23, 255})  /* ink               */
+#define C_SUBTEXT    ((Clay_Color){122, 116, 104, 255})  /* muted ink         */
+#define C_WHITE      ((Clay_Color){250, 248, 244, 255})  /* paper-white (on accent) */
+#define C_GREEN      ((Clay_Color){ 47, 120,  75, 255})  /* forest (pass)     */
+#define C_GREEN_BG   ((Clay_Color){222, 236, 224, 255})  /* pale sage         */
+#define C_RED        ((Clay_Color){178,  52,  42, 255})  /* brick (fail)      */
+#define C_RED_BG     ((Clay_Color){246, 225, 221, 255})  /* pale rose         */
+#define C_YELLOW     ((Clay_Color){166, 124,  36, 255})  /* ochre             */
+#define C_YELLOW_BG  ((Clay_Color){245, 236, 212, 255})  /* pale cream        */
 #define C_TRANS      ((Clay_Color){  0,   0,   0,   0})
 
 /* ─── Text config helper ─────────────────────────────────────────────── */
@@ -107,7 +121,7 @@ static void RenderNavItem(int idx, const char *label, int warn)
         if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
             gActiveNav = idx;
 
-        /* index badge */
+        /* index badge */ /* nav label sized at 10 to fit long type names */
         CLAY(CLAY_IDI("NavBdg", idx), {
             .layout = {
                 .sizing         = { CLAY_SIZING_FIXED(20), CLAY_SIZING_FIXED(20) },
@@ -118,7 +132,7 @@ static void RenderNavItem(int idx, const char *label, int warn)
         }) {
             CLAY_TEXT(DS("%d", idx), TC(active ? C_WHITE : C_SUBTEXT, 9));
         }
-        CLAY_TEXT(CS(label), TC(tc, 11));
+        CLAY_TEXT(CS(label), TC(tc, 10));
 
         /* push warning badge to the right edge */
         if (warn) {
@@ -131,7 +145,7 @@ static void RenderNavItem(int idx, const char *label, int warn)
                     .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
                 },
                 .backgroundColor = C_RED,
-                .cornerRadius    = CLAY_CORNER_RADIUS(8),
+                .cornerRadius    = CLAY_CORNER_RADIUS(4),
             }) {
                 CLAY_TEXT(CLAY_STRING("!"), TC(C_WHITE, 9));
             }
@@ -167,7 +181,7 @@ static void RenderSidebar(void)
                     .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
                 },
                 .backgroundColor = C_ACCENT,
-                .cornerRadius    = CLAY_CORNER_RADIUS(7),
+                .cornerRadius    = CLAY_CORNER_RADIUS(4),
             }) { CLAY_TEXT(CLAY_STRING("TC"), TC(C_WHITE, 11)); }
             CLAY(CLAY_ID("LogoText"), {
                 .layout = { .layoutDirection = CLAY_TOP_TO_BOTTOM, .childGap = 2 },
@@ -264,40 +278,25 @@ static void RenderSidebar(void)
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- *  SUMMARY CARDS ROW  (Total credits passed / subject type stats)
+ *  STAT LEDGER  (one panel, hairline-divided cells — not a card grid)
  * ═══════════════════════════════════════════════════════════════════════ */
 
-static void RenderSummaryCard(int idx, const char *title,
-                               Clay_String val, Clay_Color accent)
+/* A single label/value cell. Lives inside a bordered ledger panel that
+ * draws the dividers (.betweenChildren), so the cells read as one object. */
+static void RenderStatCell(int idx, const char *label,
+                           Clay_String val, Clay_Color valColor)
 {
-    CLAY(CLAY_IDI("SumCard", idx), {
+    CLAY(CLAY_IDI("StatCell", idx), {
         .layout = {
             .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
-            .padding         = { 14, 14, 10, 10 },
-            .childGap        = 6,
+            .padding         = { 16, 16, SP_SM, SP_SM },
+            .childGap        = SP_XS,
             .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
         },
-        .backgroundColor = C_CARD,
-        .cornerRadius    = CLAY_CORNER_RADIUS(7),
-        .border          = { .color = C_BORDER,
-                             .width = { .left=1,.right=1,.top=1,.bottom=1 } },
     }) {
-        CLAY(CLAY_IDI("SCBar", idx), {
-            .layout = {
-                .sizing         = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
-                .childGap       = 6,
-                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
-                .layoutDirection= CLAY_LEFT_TO_RIGHT,
-            },
-        }) {
-            CLAY(CLAY_IDI("SCAccent", idx), {
-                .layout          = { .sizing = { CLAY_SIZING_FIXED(3), CLAY_SIZING_FIXED(14) } },
-                .backgroundColor = accent,
-                .cornerRadius    = CLAY_CORNER_RADIUS(2),
-            }) {}
-            CLAY_TEXT(CS(title), TC(C_SUBTEXT, 10));
-        }
-        CLAY_TEXT(val, TC(C_TEXT, 22));
+        CLAY_TEXT(CS(label), TC(C_SUBTEXT, 9));
+        CLAY_TEXT(val, TC(valColor, 18));
     }
 }
 
@@ -315,24 +314,24 @@ static void RenderTableHeader(void)
         .backgroundColor = C_TBL_HDR,
         .border          = { .color = C_BORDER, .width = { .bottom = 1 } },
     }) {
-#define HDR_CELL(cid, w, lbl) \
+#define HDR_CELL(cid, w, lbl, ax) \
         CLAY(CLAY_ID(cid), { \
             .layout = { \
                 .sizing         = { w, CLAY_SIZING_GROW(0) }, \
-                .padding        = { 10, 10, 0, 0 }, \
-                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER }, \
+                .padding        = { 12, 12, 0, 0 }, \
+                .childAlignment = { .x = (ax), .y = CLAY_ALIGN_Y_CENTER }, \
             }, \
         }) { CLAY_TEXT(CLAY_STRING(lbl), TC(C_SUBTEXT, 10)); }
 
-        HDR_CELL("HC0", CLAY_SIZING_FIXED(56),  "#")
-        HDR_CELL("HC1", CLAY_SIZING_GROW(0),    "SUBJECT NAME")
-        HDR_CELL("HC2", CLAY_SIZING_FIXED(80),  "ID")
-        HDR_CELL("HC3", CLAY_SIZING_FIXED(60),  "SCORE")
-        HDR_CELL("HC4", CLAY_SIZING_FIXED(72),  "MIDTERM")
-        HDR_CELL("HC5", CLAY_SIZING_FIXED(72),  "FINAL")
-        HDR_CELL("HC6", CLAY_SIZING_FIXED(60),  "PASS")
-        HDR_CELL("HC7", CLAY_SIZING_FIXED(62),  "CREDITS")
-        HDR_CELL("HC8", CLAY_SIZING_FIXED(58),  "TERM")
+        HDR_CELL("HC0", CLAY_SIZING_FIXED(48),  "#",            CLAY_ALIGN_X_LEFT)
+        HDR_CELL("HC1", CLAY_SIZING_GROW(0),    "SUBJECT NAME", CLAY_ALIGN_X_LEFT)
+        HDR_CELL("HC2", CLAY_SIZING_FIXED(84),  "CODE",         CLAY_ALIGN_X_LEFT)
+        HDR_CELL("HC3", CLAY_SIZING_FIXED(56),  "GR",           CLAY_ALIGN_X_RIGHT)
+        HDR_CELL("HC4", CLAY_SIZING_FIXED(70),  "MID",          CLAY_ALIGN_X_RIGHT)
+        HDR_CELL("HC5", CLAY_SIZING_FIXED(70),  "FIN",          CLAY_ALIGN_X_RIGHT)
+        HDR_CELL("HC6", CLAY_SIZING_FIXED(64),  "PASS",         CLAY_ALIGN_X_CENTER)
+        HDR_CELL("HC7", CLAY_SIZING_FIXED(56),  "CR",           CLAY_ALIGN_X_RIGHT)
+        HDR_CELL("HC8", CLAY_SIZING_FIXED(56),  "SEM",          CLAY_ALIGN_X_RIGHT)
 #undef HDR_CELL
     }
 }
@@ -343,9 +342,9 @@ static Clay_Color score_color(const char *letter)
     if (!letter || letter[0] == 'X') return C_SUBTEXT;
     if (letter[0] == 'F') return C_RED;
     if (letter[0] == 'A') return C_GREEN;
-    if (letter[0] == 'B') return C_ACCENT;
-    if (letter[0] == 'C') return C_YELLOW;
-    return C_TEXT;  /* D+ or D */
+    if (letter[0] == 'B') return (Clay_Color){ 52, 88, 138, 255};  /* muted navy */
+    if (letter[0] == 'C') return C_YELLOW;                          /* ochre      */
+    return (Clay_Color){190, 108, 50, 255};  /* D+ / D — burnt orange */
 }
 
 static void RenderTableRow(Subject_Node *node, int idx)
@@ -384,8 +383,8 @@ static void RenderTableRow(Subject_Node *node, int idx)
         /* ── # ── */
         CLAY(CLAY_IDI("RC", idx * 10 + 0), {
             .layout = {
-                .sizing         = { CLAY_SIZING_FIXED(56), CLAY_SIZING_GROW(0) },
-                .padding        = { 10, 10, 0, 0 },
+                .sizing         = { CLAY_SIZING_FIXED(48), CLAY_SIZING_GROW(0) },
+                .padding        = { 12, 12, 0, 0 },
                 .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
             },
         }) { CLAY_TEXT(DS("%d", idx + 1), TC(C_SUBTEXT, 11)); }
@@ -394,26 +393,26 @@ static void RenderTableRow(Subject_Node *node, int idx)
         CLAY(CLAY_IDI("RC", idx * 10 + 1), {
             .layout = {
                 .sizing         = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
-                .padding        = { 10, 2, 0, 0 },
+                .padding        = { 12, 2, 0, 0 },
                 .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
             },
         }) { CLAY_TEXT(CS(node->name), TC(C_TEXT, 11)); }
 
-        /* ── ID ── */
+        /* ── Code ── */
         CLAY(CLAY_IDI("RC", idx * 10 + 2), {
             .layout = {
-                .sizing         = { CLAY_SIZING_FIXED(80), CLAY_SIZING_GROW(0) },
-                .padding        = { 8, 8, 0, 0 },
+                .sizing         = { CLAY_SIZING_FIXED(84), CLAY_SIZING_GROW(0) },
+                .padding        = { 12, 12, 0, 0 },
                 .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
             },
         }) { CLAY_TEXT(CS(node->ID), TC(C_ACCENT, 11)); }
 
-        /* ── Score letter ── */
+        /* ── Grade letter (right-aligned) ── */
         CLAY(CLAY_IDI("RC", idx * 10 + 3), {
             .layout = {
-                .sizing         = { CLAY_SIZING_FIXED(60), CLAY_SIZING_GROW(0) },
-                .padding        = { 8, 8, 0, 0 },
-                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                .sizing         = { CLAY_SIZING_FIXED(56), CLAY_SIZING_GROW(0) },
+                .padding        = { 12, 12, 0, 0 },
+                .childAlignment = { .x = CLAY_ALIGN_X_RIGHT, .y = CLAY_ALIGN_Y_CENTER },
             },
         }) {
             /* Reconstruct full grade string (bit1 = has '+' modifier) */
@@ -431,40 +430,40 @@ static void RenderTableRow(Subject_Node *node, int idx)
             CLAY_TEXT(DS("%s", grade), TC(sc, 13));
         }
 
-        /* ── Midterm ── */
+        /* ── Midterm (right-aligned) ── */
         CLAY(CLAY_IDI("RC", idx * 10 + 4), {
             .layout = {
-                .sizing         = { CLAY_SIZING_FIXED(72), CLAY_SIZING_GROW(0) },
-                .padding        = { 8, 8, 0, 0 },
-                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                .sizing         = { CLAY_SIZING_FIXED(70), CLAY_SIZING_GROW(0) },
+                .padding        = { 12, 12, 0, 0 },
+                .childAlignment = { .x = CLAY_ALIGN_X_RIGHT, .y = CLAY_ALIGN_Y_CENTER },
             },
         }) {
             Clay_String ms = (node->score_number_mid > 0.001f)
                              ? DS("%.2f", node->score_number_mid)
-                             : CLAY_STRING("--");
-            CLAY_TEXT(ms, TC(C_TEXT, 11));
+                             : CLAY_STRING("-");
+            CLAY_TEXT(ms, TC(node->score_number_mid > 0.001f ? C_TEXT : C_SUBTEXT, 11));
         }
 
-        /* ── Final ── */
+        /* ── Final (right-aligned) ── */
         CLAY(CLAY_IDI("RC", idx * 10 + 5), {
             .layout = {
-                .sizing         = { CLAY_SIZING_FIXED(72), CLAY_SIZING_GROW(0) },
-                .padding        = { 8, 8, 0, 0 },
-                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                .sizing         = { CLAY_SIZING_FIXED(70), CLAY_SIZING_GROW(0) },
+                .padding        = { 12, 12, 0, 0 },
+                .childAlignment = { .x = CLAY_ALIGN_X_RIGHT, .y = CLAY_ALIGN_Y_CENTER },
             },
         }) {
             Clay_String fs = (node->score_number_final > 0.001f)
                              ? DS("%.2f", node->score_number_final)
-                             : CLAY_STRING("--");
-            CLAY_TEXT(fs, TC(C_TEXT, 11));
+                             : CLAY_STRING("-");
+            CLAY_TEXT(fs, TC(node->score_number_final > 0.001f ? C_TEXT : C_SUBTEXT, 11));
         }
 
-        /* ── Pass badge ── */
+        /* ── Pass badge (centered) ── */
         CLAY(CLAY_IDI("RC", idx * 10 + 6), {
             .layout = {
-                .sizing         = { CLAY_SIZING_FIXED(60), CLAY_SIZING_GROW(0) },
+                .sizing         = { CLAY_SIZING_FIXED(64), CLAY_SIZING_GROW(0) },
                 .padding        = { 8, 8, 0, 0 },
-                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
             },
         }) {
             bool    pass_flag = node->status_pass == 1;
@@ -486,25 +485,25 @@ static void RenderTableRow(Subject_Node *node, int idx)
             }
         }
 
-        /* ── Credits ── */
+        /* ── Credits (right-aligned) ── */
         CLAY(CLAY_IDI("RC", idx * 10 + 7), {
             .layout = {
-                .sizing         = { CLAY_SIZING_FIXED(62), CLAY_SIZING_GROW(0) },
-                .padding        = { 8, 8, 0, 0 },
-                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                .sizing         = { CLAY_SIZING_FIXED(56), CLAY_SIZING_GROW(0) },
+                .padding        = { 12, 12, 0, 0 },
+                .childAlignment = { .x = CLAY_ALIGN_X_RIGHT, .y = CLAY_ALIGN_Y_CENTER },
             },
         }) { CLAY_TEXT(DS("%u", node->credit), TC(C_TEXT, 11)); }
 
-        /* ── Term ── */
+        /* ── Term / semester (right-aligned) ── */
         CLAY(CLAY_IDI("RC", idx * 10 + 8), {
             .layout = {
-                .sizing         = { CLAY_SIZING_FIXED(58), CLAY_SIZING_GROW(0) },
-                .padding        = { 8, 8, 0, 0 },
-                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                .sizing         = { CLAY_SIZING_FIXED(56), CLAY_SIZING_GROW(0) },
+                .padding        = { 12, 12, 0, 0 },
+                .childAlignment = { .x = CLAY_ALIGN_X_RIGHT, .y = CLAY_ALIGN_Y_CENTER },
             },
         }) {
             unsigned int t = node->term_recomment_to_studie;
-            CLAY_TEXT(t > 0 ? DS("%u", t) : CLAY_STRING("--"),
+            CLAY_TEXT(t > 0 ? DS("%u", t) : CLAY_STRING("-"),
                       TC(C_SUBTEXT, 11));
         }
     }
@@ -518,139 +517,153 @@ static void RenderMainContent(void)
 {
     Subject_Type *st = &gPlayer.numofSubjectType[gActiveNav];
 
+    float cpa_all  = calc_cpa(&gPlayer, 0);
+    float cpa_pass = calc_cpa(&gPlayer, 1);
+    int   eff      = calc_effective_credits(&gPlayer);
+    int   req      = calc_required_credits(&gPlayer);
+    int   sec_want = _sl_resolve_limit(&gPlayer, gActiveNav);
+    int   sec_pass = _sl_resolve_pass(&gPlayer, gActiveNav);
+    bool  grad_ok  = gPlayer.status_can_grauate;
+
     CLAY(CLAY_ID("Main"), {
         .layout = {
             .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
-            .padding         = { 20, 20, 18, 18 },
-            .childGap        = 16,
+            .padding         = { 24, 24, 20, 20 },
+            .childGap        = SP_LG,                 /* generous between sections */
             .layoutDirection = CLAY_TOP_TO_BOTTOM,
         },
         .backgroundColor = C_BG,
     }) {
 
-        /* ── Page header ── */
-        CLAY(CLAY_ID("PageHdr"), {
+        /* ── Summary group: header band + stat ledger (tight pairing) ── */
+        CLAY(CLAY_ID("SummaryGroup"), {
             .layout = {
                 .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
-                .childGap        = 12,
+                .childGap        = SP_SM,             /* tight: these belong together */
+                .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            },
+        }) {
+
+        /* ── Header band: dominant title + meta, CPA hero, standing, hint ── */
+        CLAY(CLAY_ID("HeaderBand"), {
+            .layout = {
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .padding         = { 22, 22, 18, 18 },
+                .childGap        = SP_LG,
                 .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
                 .layoutDirection = CLAY_LEFT_TO_RIGHT,
             },
+            .backgroundColor = C_CARD,
+            .cornerRadius    = CLAY_CORNER_RADIUS(4),
+            .border          = { .color = C_BORDER,
+                                 .width = { .left=1,.right=1,.top=1,.bottom=1 } },
         }) {
-            CLAY(CLAY_ID("PHLeft"), {
+            /* Title + meta — the dominant element on the page */
+            CLAY(CLAY_ID("HBTitle"), {
                 .layout = {
                     .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
                     .layoutDirection = CLAY_TOP_TO_BOTTOM,
-                    .childGap        = 4,
+                    .childGap        = SP_XS,
                 },
             }) {
-                CLAY_TEXT(CS(gTypeName[gActiveNav]), TC(C_TEXT, 20));
+                CLAY_TEXT(CS(gTypeName[gActiveNav]), TC(C_TEXT, 26));
                 CLAY_TEXT(
-                    DS("Player: %s   |   %d subjects  |  passed %d/%d credits  |  CPA %.2f",
-                       gUserName,
-                       st->Total_Subject,
-                       st->count_passCredit,
-                       st->Total_Credit,
-                       calc_cpa(&gPlayer, 0)),
+                    DS("%s   %d subjects   %d / %d section credits",
+                       gUserName, st->Total_Subject,
+                       st->count_passCredit, st->Total_Credit),
                     TC(C_SUBTEXT, 11));
             }
 
-            /* Ctrl+K hint pill */
+            /* CPA hero — real data, the single most important academic number */
+            CLAY(CLAY_ID("HBCpa"), {
+                .layout = {
+                    .sizing          = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIT(0) },
+                    .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                    .childAlignment  = { .x = CLAY_ALIGN_X_RIGHT },
+                    .childGap        = 2,
+                },
+            }) {
+                CLAY_TEXT(CLAY_STRING("CUMULATIVE GPA"), TC(C_SUBTEXT, 9));
+                CLAY_TEXT(DS("%.2f", cpa_all),           TC(C_ACCENT, 32));
+                CLAY_TEXT(CLAY_STRING("/ 4.00"),         TC(C_SUBTEXT, 9));
+            }
+
+            /* Graduation standing — a pill, not another card in a grid */
+            CLAY(CLAY_ID("HBStanding"), {
+                .layout = {
+                    .sizing          = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIT(0) },
+                    .padding         = { 14, 14, 10, 10 },
+                    .childGap        = 2,
+                    .childAlignment  = { .x = CLAY_ALIGN_X_CENTER },
+                    .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                },
+                .backgroundColor = grad_ok ? C_GREEN_BG : C_RED_BG,
+                .cornerRadius    = CLAY_CORNER_RADIUS(4),
+                .border          = { .color = grad_ok ? C_GREEN : C_RED,
+                                     .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+            }) {
+                CLAY_TEXT(CLAY_STRING("STANDING"), TC(C_SUBTEXT, 9));
+                CLAY_TEXT(grad_ok ? CLAY_STRING("READY") : CLAY_STRING("NOT READY"),
+                          TC(grad_ok ? C_GREEN : C_RED, 16));
+                CLAY_TEXT(DS("%d / %d cr", eff, req), TC(C_SUBTEXT, 9));
+            }
+
+            /* Ctrl+K hint */
             CLAY(CLAY_ID("CmdHint"), {
                 .layout = {
                     .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(30) },
                     .padding        = { 12, 12, 0, 0 },
                     .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
                 },
-                .backgroundColor = C_CARD,
-                .cornerRadius    = CLAY_CORNER_RADIUS(6),
+                .cornerRadius    = CLAY_CORNER_RADIUS(4),
                 .border          = { .color = C_BORDER,
                                      .width = { .left=1,.right=1,.top=1,.bottom=1 } },
             }) {
-                CLAY_TEXT(CLAY_STRING("Ctrl+K  Command"), TC(C_SUBTEXT, 11));
+                CLAY_TEXT(CLAY_STRING("Ctrl+K"), TC(C_SUBTEXT, 11));
             }
         }
 
-        /* ── Summary cards ── */
-        CLAY(CLAY_ID("SumRow"), {
+        /* ── Stat ledger: one bordered panel, hairline-divided cells ── */
+        CLAY(CLAY_ID("StatLedger"), {
             .layout = {
-                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(88) },
-                .childGap        = 12,
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(60) },
                 .layoutDirection = CLAY_LEFT_TO_RIGHT,
             },
+            .backgroundColor = C_CARD,
+            .cornerRadius    = CLAY_CORNER_RADIUS(4),
+            .border          = { .color = C_BORDER,
+                                 .width = { .left=1,.right=1,.top=1,.bottom=1,
+                                            .betweenChildren=1 } },
         }) {
-            /* global credit stats */
-            RenderSummaryCard(0, "Credits Passed",
+            RenderStatCell(0, "CREDITS PASSED",
                 DS("%d", gPlayer.ToTal_credit_pass), C_GREEN);
-
-            RenderSummaryCard(1, "Credits Failed",
-                DS("%d", gPlayer.ToTal_credit_npass), C_RED);
-
-            /* GPA (all studied + pass only) */
-            float cpa_all  = calc_cpa(&gPlayer, 0);
-            float cpa_pass = calc_cpa(&gPlayer, 1);
-            RenderSummaryCard(2, "CPA (All studied)",
-                DS("%.3f", cpa_all), C_ACCENT);
-
-            RenderSummaryCard(3, "CPA (Pass only)",
-                DS("%.3f", cpa_pass), C_YELLOW);
-
-            /* overall graduation progress */
-            {
-                int eff = calc_effective_credits(&gPlayer);
-                int req = calc_required_credits(&gPlayer);
-                RenderSummaryCard(4, "Total Credits (eff/req)",
-                    DS("%d / %d", eff, req),
-                    eff >= req ? C_GREEN : C_YELLOW);
-            }
-
-            /* current section credits vs required limit */
-            {
-                int sec_want = _sl_resolve_limit(&gPlayer, gActiveNav);
-                int sec_pass = _sl_resolve_pass(&gPlayer, gActiveNav);
-                RenderSummaryCard(5, "Section Credits (pass/want)",
-                    DS("%d / %d", sec_pass, sec_want),
-                    sec_pass >= sec_want ? C_GREEN : C_ACCENT);
-            }
-
-            /* graduation status */
-            CLAY(CLAY_ID("GradCard"), {
-                .layout = {
-                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
-                    .padding         = { 14, 14, 10, 10 },
-                    .childGap        = 4,
-                    .layoutDirection = CLAY_TOP_TO_BOTTOM,
-                },
-                .backgroundColor = gPlayer.status_can_grauate ? C_GREEN_BG : C_RED_BG,
-                .cornerRadius    = CLAY_CORNER_RADIUS(7),
-                .border          = { .color = gPlayer.status_can_grauate ? C_GREEN : C_RED,
-                                     .width = { .left=1,.right=1,.top=1,.bottom=1 } },
-            }) {
-                CLAY_TEXT(CLAY_STRING("Graduation"), TC(C_SUBTEXT, 10));
-                if (gPlayer.status_can_grauate) {
-                    CLAY_TEXT(CLAY_STRING("READY"), TC(C_GREEN, 20));
-                } else {
-                    int eff = calc_effective_credits(&gPlayer);
-                    int req = calc_required_credits(&gPlayer);
-                    CLAY_TEXT(DS("%d/%d cr", eff, req), TC(C_RED, 18));
-                    CLAY_TEXT(CLAY_STRING("Not ready"), TC(C_SUBTEXT, 10));
-                }
-            }
+            RenderStatCell(1, "CREDITS FAILED",
+                DS("%d", gPlayer.ToTal_credit_npass),
+                gPlayer.ToTal_credit_npass > 0 ? C_RED : C_SUBTEXT);
+            RenderStatCell(2, "CPA (PASS ONLY)",
+                DS("%.2f", cpa_pass), C_TEXT);
+            RenderStatCell(3, "TOTAL CREDITS",
+                DS("%d / %d", eff, req), eff >= req ? C_GREEN : C_TEXT);
+            RenderStatCell(4, "THIS SECTION",
+                DS("%d / %d", sec_pass, sec_want),
+                sec_pass >= sec_want ? C_GREEN : C_TEXT);
         }
+
+        }  /* SummaryGroup */
 
         /* ── Academic alert banner (hidden when alert level = 0) ── */
         if (gPlayer.status_alert > 0) {
             static const Clay_Color alert_fg[4] = {
                 {  0,  0,  0,  0},            /* 0: unused      */
-                {234,179,  8,255},            /* 1: C_YELLOW    */
-                { 99,102,241,255},            /* 2: C_ACCENT    */
-                {239, 68, 68,255},            /* 3: C_RED       */
+                {166,124, 36,255},            /* 1: ochre       */
+                {140, 47, 42,255},            /* 2: oxblood     */
+                {178, 52, 42,255},            /* 3: brick       */
             };
             static const Clay_Color alert_bg[4] = {
                 {  0,  0,  0,  0},
-                { 60, 50, 10,255},            /* C_YELLOW_BG    */
-                { 22, 23, 58,255},            /* C_ACCENT_BG    */
-                { 70, 18, 18,255},            /* C_RED_BG       */
+                {245,236,212,255},            /* pale cream     */
+                {243,228,225,255},            /* pale crimson   */
+                {246,225,221,255},            /* pale rose      */
             };
             static const char *alert_label[4] = {
                 "", "Caution", "Warning", "Critical"
@@ -662,9 +675,9 @@ static void RenderMainContent(void)
                     .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
                 },
                 .backgroundColor = alert_bg[gPlayer.status_alert],
-                .cornerRadius    = CLAY_CORNER_RADIUS(6),
+                .cornerRadius    = CLAY_CORNER_RADIUS(4),
                 .border = { .color = alert_fg[gPlayer.status_alert],
-                            .width = { .left = 3 } },
+                            .width = { .left=1,.right=1,.top=1,.bottom=1 } },
             }) {
                 CLAY_TEXT(
                     DS("Academic Alert  [Level %d — %s]  %d studied-but-failed credits",
@@ -685,13 +698,14 @@ static void RenderMainContent(void)
                     .layoutDirection = CLAY_TOP_TO_BOTTOM,
                 },
                 .backgroundColor = C_RED_BG,
-                .cornerRadius    = CLAY_CORNER_RADIUS(6),
-                .border          = { .color = C_RED, .width = { .left = 3 } },
+                .cornerRadius    = CLAY_CORNER_RADIUS(4),
+                .border          = { .color = C_RED,
+                                     .width = { .left=1,.right=1,.top=1,.bottom=1 } },
             }) {
                 CLAY_TEXT(CLAY_STRING("Data file validation errors:"), TC(C_RED, 11));
                 const char *_w = gDataWarningsBuf;
                 for (int _k = 0; _k < gDataWarnCount; _k++) {
-                    CLAY_TEXT(DS("  * %s", _w), TC(C_WHITE, 11));
+                    CLAY_TEXT(DS("  * %s", _w), TC(C_TEXT, 11));
                     _w += strlen(_w) + 1;
                 }
             }
@@ -704,7 +718,7 @@ static void RenderMainContent(void)
                 .layoutDirection = CLAY_TOP_TO_BOTTOM,
             },
             .backgroundColor = C_CARD,
-            .cornerRadius    = CLAY_CORNER_RADIUS(8),
+            .cornerRadius    = CLAY_CORNER_RADIUS(4),
             .border          = { .color = C_BORDER,
                                  .width = { .left=1,.right=1,.top=1,.bottom=1 } },
         }) {
@@ -777,28 +791,29 @@ static void RenderMainContent(void)
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /* Colors used for each grade band in charts */
-#define C_GRADE_A  ((Clay_Color){ 34, 197,  94, 255})
-#define C_GRADE_B  ((Clay_Color){ 99, 102, 241, 255})
-#define C_GRADE_C  ((Clay_Color){234, 179,   8, 255})
-#define C_GRADE_D  ((Clay_Color){249, 115,  22, 255})
-#define C_GRADE_F  ((Clay_Color){239,  68,  68, 255})
-#define C_GRADE_X  ((Clay_Color){ 60,  60,  90, 255})
+#define C_GRADE_A  ((Clay_Color){ 47, 120,  75, 255})  /* forest      */
+#define C_GRADE_B  ((Clay_Color){ 52,  88, 138, 255})  /* muted navy  */
+#define C_GRADE_C  ((Clay_Color){166, 124,  36, 255})  /* ochre       */
+#define C_GRADE_D  ((Clay_Color){190, 108,  50, 255})  /* burnt orange*/
+#define C_GRADE_F  ((Clay_Color){178,  52,  42, 255})  /* brick       */
+#define C_GRADE_X  ((Clay_Color){180, 172, 158, 255})  /* faint paper */
 
 /* Per-type colors cycle for the progress bars */
+/* Muted, paper-readable hues — each distinct, none neon. */
 static const Clay_Color kTypeColors[13] = {
-    {  99, 102, 241, 255}, /* 1  co_so_nganh        */
-    {  34, 197,  94, 255}, /* 2  dai_cuong          */
-    { 249, 115,  22, 255}, /* 3  the_thao           */
-    { 234, 179,   8, 255}, /* 4  ly_luat_chinh_tri  */
-    {  20, 184, 166, 255}, /* 5  tu_chon            */
-    { 168,  85, 247, 255}, /* 6  modunI             */
-    { 236,  72, 153, 255}, /* 7  modunII            */
-    {  14, 165, 233, 255}, /* 8  modunIII           */
-    { 132, 204,  22, 255}, /* 9  modunIV            */
-    { 251, 191,  36, 255}, /* 10 modunV             */
-    { 239,  68,  68, 255}, /* 11 modunVI            */
-    {  52, 211, 153, 255}, /* 12 thuc_tap           */
-    { 248, 113, 113, 255}, /* 13 do_an_tot_nghiep   */
+    { 140,  47,  42, 255}, /* 1  co_so_nganh       — oxblood   */
+    {  47, 120,  75, 255}, /* 2  dai_cuong         — forest    */
+    { 190, 108,  50, 255}, /* 3  the_thao          — burnt org */
+    { 166, 124,  36, 255}, /* 4  ly_luat_chinh_tri — ochre     */
+    {  46, 134, 130, 255}, /* 5  tu_chon           — teal      */
+    { 124,  82, 150, 255}, /* 6  modunI            — plum      */
+    { 178,  78, 120, 255}, /* 7  modunII           — rose      */
+    {  52,  88, 138, 255}, /* 8  modunIII          — navy      */
+    { 110, 130,  60, 255}, /* 9  modunIV           — olive     */
+    { 200, 150,  60, 255}, /* 10 modunV            — amber     */
+    { 150,  74,  64, 255}, /* 11 modunVI           — terracotta*/
+    {  64, 132, 110, 255}, /* 12 thuc_tap          — sea green */
+    { 120, 100,  92, 255}, /* 13 do_an_tot_nghiep  — taupe     */
 };
 
 /*
@@ -808,29 +823,49 @@ static const Clay_Color kTypeColors[13] = {
  */
 #define DONUT_GRADE_ID  "DashDonutGrade"
 #define DONUT_CPA_ID    "DashDonutCPA"
+#define RADAR_GRADE_ID  "DashRadarGrade"
 
-static void RenderDashStatCard(int idx, const char *title,
-                                Clay_String val, Clay_Color accent,
-                                const char *sub)
+/* Nine grade buckets, fine-grained (with +/- modifier): A+ A B+ B C+ C D+ D F */
+static const char *kGradeLabels[9] = { "A+","A","B+","B","C+","C","D+","D","F" };
+
+/* Color band for a bucket index — shared by the breakdown bars and the radar. */
+static Clay_Color grade_band_color(int b)
 {
-    CLAY(CLAY_IDI("DStatCard", idx), {
-        .layout = {
-            .sizing          = { CLAY_SIZING_PERCENT(0.2f), CLAY_SIZING_FIT(0) },
-            .padding         = { 16, 16, 14, 14 },
-            .childGap        = 5,
-            .layoutDirection = CLAY_TOP_TO_BOTTOM,
-        },
-        .backgroundColor = C_CARD,
-        .cornerRadius    = CLAY_CORNER_RADIUS(8),
-        .border          = { .color = accent,
-                             .width = { .left=3,.right=0,.top=0,.bottom=0 } },
-    }) {
-        CLAY_TEXT(CS(title), TC(C_SUBTEXT, 10));
-        CLAY_TEXT(val, TC(C_TEXT, 24));
-        if (sub && sub[0])
-            CLAY_TEXT(CS(sub), TC(C_SUBTEXT, 9));
+    switch (b) {
+        case 0: case 1: return C_GREEN;                     /* A+, A  */
+        case 2: case 3: return (Clay_Color){ 52, 88,138,255};/* B+, B */
+        case 4: case 5: return C_YELLOW;                    /* C+, C  */
+        case 6: case 7: return (Clay_Color){190,108, 50,255};/* D+, D */
+        default:        return C_RED;                       /* F      */
     }
 }
+
+/* Count studied subjects into the nine buckets. Visible to main.c (which
+ * #includes this file) for drawing the radar polygon. */
+static void calc_grade_counts(int out[9])
+{
+    for (int i = 0; i < 9; i++) out[i] = 0;
+    for (int t = 1; t < sizeSubjectType; t++) {
+        Subject_Node *n = gPlayer.numofSubjectType[t].head;
+        while (n) {
+            if (n->status_ever_been_study & 1) {
+                bool plus = (n->status_ever_been_study & 2) != 0;
+                int b = -1;
+                switch (n->score_letter) {
+                    case 'A': b = plus ? 0 : 1; break;
+                    case 'B': b = plus ? 2 : 3; break;
+                    case 'C': b = plus ? 4 : 5; break;
+                    case 'D': b = plus ? 6 : 7; break;
+                    case 'F': b = 8; break;
+                    default:  b = -1; break;
+                }
+                if (b >= 0) out[b]++;
+            }
+            n = n->next;
+        }
+    }
+}
+
 
 static void RenderDashboard(void)
 {
@@ -869,8 +904,8 @@ static void RenderDashboard(void)
     CLAY(CLAY_ID("Dash"), {
         .layout = {
             .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
-            .padding         = { 20, 20, 16, 16 },
-            .childGap        = 16,
+            .padding         = { 24, 24, 20, 20 },
+            .childGap        = SP_LG,
             .layoutDirection = CLAY_TOP_TO_BOTTOM,
         },
         .backgroundColor = C_BG,
@@ -881,59 +916,88 @@ static void RenderDashboard(void)
         CLAY(CLAY_ID("DashHdr"), {
             .layout = {
                 .sizing          = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIT(0) },
-                .childGap        = 6,
+                .childGap        = SP_XS,
                 .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
                 .layoutDirection = CLAY_TOP_TO_BOTTOM,
             },
         }) {
-            CLAY_TEXT(CLAY_STRING("Dashboard"), TC(C_TEXT, 20));
+            CLAY_TEXT(CLAY_STRING("Dashboard"), TC(C_TEXT, 26));
             CLAY_TEXT(
                 DS("Overview for %s  |  %d total subjects",
                    gUserName, total_subjects),
                 TC(C_SUBTEXT, 11));
         }
 
-        /* ── Top stat cards ── */
-        CLAY(CLAY_ID("DashCards"), {
+        /* ── Standing (dominant) + supporting stat ledger ── */
+        CLAY(CLAY_ID("DashTop"), {
             .layout = {
                 .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
-                .childGap        = 12,
+                .childGap        = SP_SM,
                 .layoutDirection = CLAY_LEFT_TO_RIGHT,
             },
         }) {
-            RenderDashStatCard(0, "Credits Passed",
-                DS("%d", gPlayer.ToTal_credit_pass), C_GREEN,
-                "studied & passed");
-            RenderDashStatCard(1, "Credits Failed",
-                DS("%d", gPlayer.ToTal_credit_npass), C_RED,
-                "studied but failed");
-            RenderDashStatCard(2, "CPA (All studied)",
-                DS("%.3f", cpa_all), C_ACCENT,
-                "4.0 scale");
-            RenderDashStatCard(3, "Progress",
-                DS("%d / %d cr", eff, req),
-                eff >= req ? C_GREEN : C_YELLOW,
-                eff >= req ? "Ready to graduate" : "Effective / Required");
-            /* graduation status card */
-            CLAY(CLAY_IDI("DStatCard", 4), {
+            float prog = req > 0 ? (float)eff / (float)req : 0.f;
+            if (prog > 1.f) prog = 1.f;
+            bool grad_ok = gPlayer.status_can_grauate;
+
+            /* Dominant: academic standing + a real progress bar */
+            CLAY(CLAY_ID("DashStanding"), {
                 .layout = {
-                    .sizing          = { CLAY_SIZING_PERCENT(0.2f), CLAY_SIZING_FIT(0) },
-                    .padding         = { 16, 16, 14, 14 },
-                    .childGap        = 5,
+                    .sizing          = { CLAY_SIZING_PERCENT(0.42f), CLAY_SIZING_FIT(0) },
+                    .padding         = { 20, 20, 18, 18 },
+                    .childGap        = SP_SM,
                     .layoutDirection = CLAY_TOP_TO_BOTTOM,
                 },
-                .backgroundColor = gPlayer.status_can_grauate ? C_GREEN_BG : C_RED_BG,
-                .cornerRadius    = CLAY_CORNER_RADIUS(8),
-                .border          = {
-                    .color = gPlayer.status_can_grauate ? C_GREEN : C_RED,
-                    .width = { .left=3 },
-                },
+                .backgroundColor = grad_ok ? C_GREEN_BG : C_CARD,
+                .cornerRadius    = CLAY_CORNER_RADIUS(4),
+                .border          = { .color = grad_ok ? C_GREEN : C_BORDER,
+                                     .width = { .left=1,.right=1,.top=1,.bottom=1 } },
             }) {
-                CLAY_TEXT(CLAY_STRING("Graduation"), TC(C_SUBTEXT, 10));
-                CLAY_TEXT(
-                    gPlayer.status_can_grauate ? CLAY_STRING("READY")
-                                               : CLAY_STRING("NOT READY"),
-                    TC(gPlayer.status_can_grauate ? C_GREEN : C_RED, 22));
+                CLAY_TEXT(CLAY_STRING("ACADEMIC STANDING"), TC(C_SUBTEXT, 9));
+                CLAY_TEXT(grad_ok ? CLAY_STRING("Ready to graduate")
+                                  : CLAY_STRING("In progress"),
+                          TC(grad_ok ? C_GREEN : C_TEXT, 24));
+                /* progress track (eff / req) */
+                CLAY(CLAY_ID("DashProgTrack"), {
+                    .layout = {
+                        .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(10) },
+                        .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                    },
+                    .backgroundColor = C_BORDER,
+                    .cornerRadius    = CLAY_CORNER_RADIUS(5),
+                }) {
+                    CLAY(CLAY_ID("DashProgFill"), {
+                        .layout = { .sizing = {
+                            CLAY_SIZING_PERCENT(prog > 0.f ? prog : 0.01f),
+                            CLAY_SIZING_GROW(0) } },
+                        .backgroundColor = grad_ok ? C_GREEN : C_ACCENT,
+                        .cornerRadius    = CLAY_CORNER_RADIUS(5),
+                    }) {}
+                }
+                CLAY_TEXT(DS("%d of %d required credits  (%d%%)",
+                             eff, req, (int)(prog * 100.f + 0.5f)),
+                          TC(C_SUBTEXT, 10));
+            }
+
+            /* Supporting: stat ledger, one panel with hairline dividers */
+            CLAY(CLAY_ID("DashLedger"), {
+                .layout = {
+                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+                    .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                },
+                .backgroundColor = C_CARD,
+                .cornerRadius    = CLAY_CORNER_RADIUS(4),
+                .border          = { .color = C_BORDER,
+                                     .width = { .left=1,.right=1,.top=1,.bottom=1,
+                                                .betweenChildren=1 } },
+            }) {
+                RenderStatCell(0, "CREDITS PASSED",
+                    DS("%d", gPlayer.ToTal_credit_pass), C_GREEN);
+                RenderStatCell(1, "CREDITS FAILED",
+                    DS("%d", gPlayer.ToTal_credit_npass),
+                    gPlayer.ToTal_credit_npass > 0 ? C_RED : C_SUBTEXT);
+                RenderStatCell(2, "CUMULATIVE GPA",
+                    DS("%.2f", cpa_all), C_ACCENT);
             }
         }
 
@@ -955,7 +1019,7 @@ static void RenderDashboard(void)
                     .layoutDirection = CLAY_TOP_TO_BOTTOM,
                 },
                 .backgroundColor = C_CARD,
-                .cornerRadius    = CLAY_CORNER_RADIUS(8),
+                .cornerRadius    = CLAY_CORNER_RADIUS(4),
                 .border          = { .color = C_BORDER,
                                      .width = { .left=1,.right=1,.top=1,.bottom=1 } },
             }) {
@@ -1005,7 +1069,7 @@ static void RenderDashboard(void)
                     .layoutDirection = CLAY_TOP_TO_BOTTOM,
                 },
                 .backgroundColor = C_CARD,
-                .cornerRadius    = CLAY_CORNER_RADIUS(8),
+                .cornerRadius    = CLAY_CORNER_RADIUS(4),
                 .border          = { .color = C_BORDER,
                                      .width = { .left=1,.right=1,.top=1,.bottom=1 } },
             }) {
@@ -1028,7 +1092,7 @@ static void RenderDashboard(void)
                     .layoutDirection = CLAY_TOP_TO_BOTTOM,
                 },
                 .backgroundColor = C_CARD,
-                .cornerRadius    = CLAY_CORNER_RADIUS(8),
+                .cornerRadius    = CLAY_CORNER_RADIUS(4),
                 .border          = { .color = C_BORDER,
                                      .width = { .left=1,.right=1,.top=1,.bottom=1 } },
             }) {
@@ -1095,23 +1159,31 @@ static void RenderDashboard(void)
             }
         }
 
-        /* ── Bottom: graduation checklist ── */
-        CLAY(CLAY_ID("DashCheck"), {
+        /* ── Bottom: grade distribution (radar + breakdown) ── */
+        int gc[9];
+        calc_grade_counts(gc);
+        int gc_max = 1, gc_total = 0;
+        for (int i = 0; i < 9; i++) {
+            gc_total += gc[i];
+            if (gc[i] > gc_max) gc_max = gc[i];
+        }
+
+        CLAY(CLAY_ID("DashGrades"), {
             .layout = {
                 .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
-                .padding         = { 16, 16, 12, 12 },
-                .childGap        = 0,
+                .padding         = { 16, 16, 14, 14 },
+                .childGap        = SP_SM,
                 .layoutDirection = CLAY_TOP_TO_BOTTOM,
             },
             .backgroundColor = C_CARD,
-            .cornerRadius    = CLAY_CORNER_RADIUS(8),
+            .cornerRadius    = CLAY_CORNER_RADIUS(4),
             .border          = { .color = C_BORDER,
                                  .width = { .left=1,.right=1,.top=1,.bottom=1 } },
         }) {
             /* header */
-            CLAY(CLAY_ID("DCheckHdr"), {
+            CLAY(CLAY_ID("DGradeHdr"), {
                 .layout = {
-                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(32) },
+                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(30) },
                     .padding         = { 0, 0, 0, 8 },
                     .childGap        = 12,
                     .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
@@ -1119,70 +1191,86 @@ static void RenderDashboard(void)
                 },
                 .border = { .color = C_BORDER, .width = { .bottom = 1 } },
             }) {
-                CLAY_TEXT(CLAY_STRING("Graduation Checklist"), TC(C_TEXT, 12));
-                CLAY(CLAY_ID("DChkSp"), { .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(1) } } }) {}
-                CLAY_TEXT(
-                    DS("%s",  gPlayer.status_can_grauate
-                        ? "All requirements met" : "Requirements pending"),
-                    TC(gPlayer.status_can_grauate ? C_GREEN : C_YELLOW, 10));
+                CLAY_TEXT(CLAY_STRING("Grade Distribution"), TC(C_TEXT, 12));
+                CLAY(CLAY_ID("DGradeSp"), {
+                    .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(1) } },
+                }) {}
+                CLAY_TEXT(DS("%d graded subjects", gc_total), TC(C_SUBTEXT, 10));
             }
-            /* one row per type */
-            {
-                int _miss2[sizeSubjectType];
-                calc_missing_types(&gPlayer, _miss2);
-                for (int t = 1; t < sizeSubjectType; t++) {
-                    Subject_Type *st2 = &gPlayer.numofSubjectType[t];
-                    if (gTypeName[t][0] == 0 || st2->Total_Subject == 0) continue;
 
-                    int pass2 = (int)st2->count_passCredit;
-                    int lim2  = _sl_resolve_limit(&gPlayer, t);
-                    bool done = (_miss2[t] == 0);
-                    Clay_Color rowbg = done ? (Clay_Color){16,40,24,255}
-                                            : C_TRANS;
-                    Clay_Color fg2   = done ? C_GREEN : C_SUBTEXT;
+            /* body: radar (left) + breakdown bars (right) */
+            CLAY(CLAY_ID("DGradeBody"), {
+                .layout = {
+                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(280) },
+                    .childGap        = SP_LG,
+                    .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                    .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                },
+            }) {
+                /* radar placeholder — Raylib draws the spider chart into this box */
+                CLAY(CLAY_ID(RADAR_GRADE_ID), {
+                    .layout = { .sizing = { CLAY_SIZING_PERCENT(0.5f),
+                                            CLAY_SIZING_GROW(0) } },
+                    .backgroundColor = C_TRANS,
+                }) {}
 
-                    CLAY(CLAY_IDI("DChkRow", t), {
-                        .layout = {
-                            .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(36) },
-                            .padding         = { 6, 6, 0, 0 },
-                            .childGap        = 10,
-                            .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
-                            .layoutDirection = CLAY_LEFT_TO_RIGHT,
-                        },
-                        .backgroundColor = rowbg,
-                        .border = { .color = C_BORDER, .width = { .bottom=1 } },
-                    }) {
-                        /* checkmark box */
-                        CLAY(CLAY_IDI("DChkBox", t), {
+                /* breakdown: one bar per grade, exact counts */
+                CLAY(CLAY_ID("DGradeBreak"), {
+                    .layout = {
+                        .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                        .childGap        = SP_SM,
+                        .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                    },
+                }) {
+                    for (int b = 0; b < 9; b++) {
+                        Clay_Color bc = grade_band_color(b);
+                        float pct = (float)gc[b] / (float)gc_max;
+                        if (pct < 0.f) pct = 0.f;
+                        CLAY(CLAY_IDI("GBRow", b), {
                             .layout = {
-                                .sizing         = { CLAY_SIZING_FIXED(18), CLAY_SIZING_FIXED(18) },
-                                .childAlignment = { .x=CLAY_ALIGN_X_CENTER, .y=CLAY_ALIGN_Y_CENTER },
+                                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(20) },
+                                .childGap        = 10,
+                                .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                                .layoutDirection = CLAY_LEFT_TO_RIGHT,
                             },
-                            .backgroundColor = done ? C_GREEN : C_BORDER,
-                            .cornerRadius    = CLAY_CORNER_RADIUS(4),
                         }) {
-                            if (done)
-                                CLAY_TEXT(CLAY_STRING("v"), TC(C_WHITE, 9));
+                            /* grade label */
+                            CLAY(CLAY_IDI("GBLbl", b), {
+                                .layout = {
+                                    .sizing         = { CLAY_SIZING_FIXED(32), CLAY_SIZING_GROW(0) },
+                                    .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                                },
+                            }) { CLAY_TEXT(CS(kGradeLabels[b]),
+                                           TC(gc[b] > 0 ? bc : C_SUBTEXT, 11)); }
+                            /* track + fill */
+                            CLAY(CLAY_IDI("GBTrk", b), {
+                                .layout = {
+                                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(10) },
+                                    .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                                },
+                                .backgroundColor = C_BORDER,
+                                .cornerRadius    = CLAY_CORNER_RADIUS(5),
+                            }) {
+                                if (gc[b] > 0)
+                                    CLAY(CLAY_IDI("GBFill", b), {
+                                        .layout = { .sizing = {
+                                            CLAY_SIZING_PERCENT(pct > 0.04f ? pct : 0.04f),
+                                            CLAY_SIZING_GROW(0) } },
+                                        .backgroundColor = bc,
+                                        .cornerRadius    = CLAY_CORNER_RADIUS(5),
+                                    }) {}
+                            }
+                            /* count */
+                            CLAY(CLAY_IDI("GBCnt", b), {
+                                .layout = {
+                                    .sizing         = { CLAY_SIZING_FIXED(28), CLAY_SIZING_GROW(0) },
+                                    .padding        = { 0, 4, 0, 0 },
+                                    .childAlignment = { .x = CLAY_ALIGN_X_RIGHT,
+                                                        .y = CLAY_ALIGN_Y_CENTER },
+                                },
+                            }) { CLAY_TEXT(DS("%d", gc[b]),
+                                           TC(gc[b] > 0 ? C_TEXT : C_SUBTEXT, 11)); }
                         }
-                        /* name */
-                        CLAY_TEXT(CS(gTypeName[t]), TC(C_TEXT, 11));
-                        /* spacer */
-                        CLAY(CLAY_IDI("DChkRowSp", t), {
-                            .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(1) } },
-                        }) {}
-                        /* credit progress */
-                        CLAY_TEXT(
-                            DS("%d / %d cr", pass2, lim2 > 0 ? lim2 : st2->Total_Credit),
-                            TC(fg2, 10));
-                        /* subjects */
-                        CLAY_TEXT(
-                            DS("%d subj", st2->Total_Subject),
-                            TC(C_SUBTEXT, 9));
-                        /* CPA for this type */
-                        float tcpa = calc_cpa_type(&gPlayer, t, 0);
-                        CLAY_TEXT(
-                            DS("CPA %.2f", tcpa),
-                            TC(tcpa >= 2.0f ? C_ACCENT : C_RED, 9));
                     }
                 }
             }
@@ -1204,7 +1292,7 @@ static void RenderEditPopup(void)
             .sizing = { CLAY_SIZING_FIXED((float)gScreenW),
                         CLAY_SIZING_FIXED((float)gScreenH) },
         },
-        .backgroundColor = (Clay_Color){ 0, 0, 0, 160 },
+        .backgroundColor = (Clay_Color){ 27, 26, 23, 120 },
         .floating = {
             .attachTo = CLAY_ATTACH_TO_ROOT,
             .zIndex   = 15,
@@ -1394,8 +1482,8 @@ static void RenderEditPopup(void)
                     .padding        = { 18, 18, 6, 6 },
                     .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
                 },
-                .backgroundColor = Clay_Hovered() ? C_GREEN : C_GREEN_BG,
-                .cornerRadius    = CLAY_CORNER_RADIUS(6),
+                .backgroundColor = Clay_Hovered() ? (Clay_Color){38,98,61,255} : C_GREEN,
+                .cornerRadius    = CLAY_CORNER_RADIUS(4),
                 .border          = { .color = C_GREEN,
                                      .width = { .left=1,.right=1,.top=1,.bottom=1 } },
             }) {
@@ -1424,8 +1512,8 @@ static void RenderEditPopup(void)
                     .padding        = { 18, 18, 6, 6 },
                     .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
                 },
-                .backgroundColor = Clay_Hovered() ? C_RED : C_RED_BG,
-                .cornerRadius    = CLAY_CORNER_RADIUS(6),
+                .backgroundColor = Clay_Hovered() ? (Clay_Color){150,42,34,255} : C_RED,
+                .cornerRadius    = CLAY_CORNER_RADIUS(4),
                 .border          = { .color = C_RED,
                                      .width = { .left=1,.right=1,.top=1,.bottom=1 } },
             }) {
@@ -1603,7 +1691,7 @@ static void RenderCommandPopup(void)
             .sizing = { CLAY_SIZING_FIXED((float)gScreenW),
                         CLAY_SIZING_FIXED((float)gScreenH) },
         },
-        .backgroundColor = (Clay_Color){ 0, 0, 0, 150 },
+        .backgroundColor = (Clay_Color){ 27, 26, 23, 110 },
         .floating = {
             .attachTo = CLAY_ATTACH_TO_ROOT,
             .zIndex   = 5,
@@ -1714,9 +1802,9 @@ static void RenderResultToast(void)
 
     uint8_t alpha = (remaining < 1.f) ? (uint8_t)(remaining * 255.f) : 255;
 
-    Clay_Color toastBg  = (Clay_Color){ 20,  20,  38, alpha };
-    Clay_Color toastBdr = (Clay_Color){ 99, 102, 241, alpha };
-    Clay_Color textClr  = (Clay_Color){224, 224, 242, alpha };
+    Clay_Color toastBg  = (Clay_Color){250, 248, 243, alpha };
+    Clay_Color toastBdr = (Clay_Color){140,  47,  42, alpha };
+    Clay_Color textClr  = (Clay_Color){ 27,  26,  23, alpha };
 
     CLAY(CLAY_ID("ResultToast"), {
         .layout = {
@@ -1727,7 +1815,7 @@ static void RenderResultToast(void)
             .layoutDirection = CLAY_LEFT_TO_RIGHT,
         },
         .backgroundColor = toastBg,
-        .cornerRadius    = CLAY_CORNER_RADIUS(8),
+        .cornerRadius    = CLAY_CORNER_RADIUS(4),
         .border          = { .color = toastBdr,
                              .width = { .left=1,.right=1,.top=1,.bottom=1 } },
         .floating = {

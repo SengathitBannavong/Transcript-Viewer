@@ -310,10 +310,10 @@ int main(void)
         SetTargetFPS(60);
         while (!WindowShouldClose() && !GetKeyPressed()) {
             BeginDrawing();
-            ClearBackground((Color){ 11, 11, 20, 255 });
-            DrawText(msg1, 40, 120, 28, (Color){ 239, 68, 68, 255 });
-            DrawText(msg2, 40, 165, 20, (Color){ 224, 224, 242, 255 });
-            DrawText(msg3, 40, 210, 16, (Color){ 110, 110, 155, 255 });
+            ClearBackground((Color){ 241, 237, 229, 255 });
+            DrawText(msg1, 40, 120, 28, (Color){ 178, 52, 42, 255 });
+            DrawText(msg2, 40, 165, 20, (Color){ 27, 26, 23, 255 });
+            DrawText(msg3, 40, 210, 16, (Color){ 122, 116, 104, 255 });
             EndDrawing();
         }
         CloseWindow();
@@ -399,7 +399,7 @@ int main(void)
         Clay_RenderCommandArray cmds = Clay_EndLayout();
 
         BeginDrawing();
-        ClearBackground((Color){ 11, 11, 20, 255 });
+        ClearBackground((Color){ 241, 237, 229, 255 });
         Clay_Raylib_Render(cmds, gFonts);
 
         /* ── Draw donut charts on top of Clay output (dashboard only) ── */
@@ -439,12 +439,12 @@ int main(void)
 
                 typedef struct { int cnt; Color col; } Seg;
                 Seg segs[6] = {
-                    {cA, (Color){ 34,197, 94,255}},
-                    {cB, (Color){ 99,102,241,255}},
-                    {cC, (Color){234,179,  8,255}},
-                    {cD, (Color){249,115, 22,255}},
-                    {cF, (Color){239, 68, 68,255}},
-                    {cX, (Color){ 60, 60, 90,180}},
+                    {cA, (Color){ 47,120, 75,255}},   /* forest       */
+                    {cB, (Color){ 52, 88,138,255}},   /* navy         */
+                    {cC, (Color){166,124, 36,255}},   /* ochre        */
+                    {cD, (Color){190,108, 50,255}},   /* burnt orange */
+                    {cF, (Color){178, 52, 42,255}},   /* brick        */
+                    {cX, (Color){180,172,158,255}},   /* faint paper  */
                 };
                 float angle = -90.f;
                 for (int s=0; s<6; s++) {
@@ -460,11 +460,11 @@ int main(void)
                 float tw = MeasureTextEx(gFonts[0], ctxt, 14.f, 1.f).x;
                 DrawTextEx(gFonts[0], ctxt,
                            (Vector2){cx - tw*0.5f, cy - 10.f},
-                           12.f*gFontScale, 1.f, (Color){224,224,242,255});
+                           12.f*gFontScale, 1.f, (Color){27,26,23,255});
                 DrawTextEx(gFonts[0], "subj",
                            (Vector2){cx - MeasureTextEx(gFonts[0],"subj",10.f,1.f).x*0.5f,
                                      cy + 2.f},
-                           12.f*gFontScale, 1.f, (Color){110,110,155,255});
+                           12.f*gFontScale, 1.f, (Color){122,116,104,255});
             }
 
             /* ── CPA gauge (arc from -135° to 135°, 0..4 scale) ── */
@@ -481,13 +481,13 @@ int main(void)
 
                 /* background arc */
                 DrawRing((Vector2){cx,cy}, inner, r, -135.f, 135.f, 36,
-                         (Color){36,36,68,255});
+                         (Color){221,214,201,255});
                 /* filled arc */
                 float fillEnd = -135.f + 270.f * (cpa_v / 4.f);
-                Color fillCol = cpa_v >= 3.5f ? (Color){ 34,197, 94,255}
-                              : cpa_v >= 2.5f ? (Color){ 99,102,241,255}
-                              : cpa_v >= 2.0f ? (Color){234,179,  8,255}
-                                              : (Color){239, 68, 68,255};
+                Color fillCol = cpa_v >= 3.5f ? (Color){ 47,120, 75,255}
+                              : cpa_v >= 2.5f ? (Color){ 52, 88,138,255}
+                              : cpa_v >= 2.0f ? (Color){166,124, 36,255}
+                                              : (Color){178, 52, 42,255};
                 if (cpa_v > 0.01f)
                     DrawRing((Vector2){cx,cy}, inner, r, -135.f, fillEnd, 36,
                              fillCol);
@@ -501,7 +501,85 @@ int main(void)
                 DrawTextEx(gFonts[0], "/ 4.00",
                            (Vector2){cx - MeasureTextEx(gFonts[0],"/ 4.00",10.f,1.f).x*0.5f,
                                      cy + 8.f},
-                           12.f*gFontScale, 1.f, (Color){110,110,155,255});
+                           12.f*gFontScale, 1.f, (Color){122,116,104,255});
+            }
+
+            /* ── Grade-distribution radar (A+ A B+ B C+ C D+ D F) ── */
+            Clay_ElementData radd = Clay_GetElementData(
+                Clay_GetElementId(CLAY_STRING(RADAR_GRADE_ID)));
+            if (radd.found && radd.boundingBox.width > 20.f) {
+                float cx  = radd.boundingBox.x + radd.boundingBox.width  * 0.5f;
+                float cy  = radd.boundingBox.y + radd.boundingBox.height * 0.5f;
+                float box = radd.boundingBox.width < radd.boundingBox.height
+                            ? radd.boundingBox.width : radd.boundingBox.height;
+                float R   = box * 0.5f - 40.f;          /* room for labels */
+                if (R < 24.f) R = 24.f;
+
+                int gc[9];
+                calc_grade_counts(gc);
+                int gmax = 1;
+                for (int i = 0; i < 9; i++) if (gc[i] > gmax) gmax = gc[i];
+
+                const float TAU = 6.2831853f;
+                Vector2 dir[9];
+                for (int i = 0; i < 9; i++) {
+                    float a = -TAU * 0.25f + (float)i * (TAU / 9.f);  /* top, clockwise */
+                    dir[i] = (Vector2){ cosf(a), sinf(a) };
+                }
+
+                Color gridCol   = (Color){221, 214, 201, 255};
+                Color spokeCol  = (Color){208, 200, 186, 255};
+                Color axisTxt   = (Color){122, 116, 104, 255};
+                Color dataLine  = (Color){140,  47,  42, 255};
+                Color dataFill  = (Color){140,  47,  42,  46};
+
+                /* concentric grid rings */
+                for (int k = 1; k <= 4; k++) {
+                    float rr = R * (float)k / 4.f;
+                    for (int i = 0; i < 9; i++) {
+                        Vector2 p1 = { cx + dir[i].x*rr,       cy + dir[i].y*rr };
+                        Vector2 p2 = { cx + dir[(i+1)%9].x*rr, cy + dir[(i+1)%9].y*rr };
+                        DrawLineEx(p1, p2, 1.f, gridCol);
+                    }
+                }
+                /* spokes */
+                for (int i = 0; i < 9; i++)
+                    DrawLineEx((Vector2){cx, cy},
+                               (Vector2){cx + dir[i].x*R, cy + dir[i].y*R},
+                               1.f, spokeCol);
+
+                /* data polygon */
+                Vector2 pts[9];
+                for (int i = 0; i < 9; i++) {
+                    float rr = R * ((float)gc[i] / (float)gmax);
+                    if (rr < 1.f) rr = 1.f;
+                    pts[i] = (Vector2){ cx + dir[i].x*rr, cy + dir[i].y*rr };
+                }
+                /* translucent fill */
+                Vector2 fan[11];
+                fan[0] = (Vector2){ cx, cy };
+                for (int i = 0; i < 9; i++) fan[i+1] = pts[i];
+                fan[10] = pts[0];
+                DrawTriangleFan(fan, 11, dataFill);
+                /* outline + vertex dots */
+                for (int i = 0; i < 9; i++)
+                    DrawLineEx(pts[i], pts[(i+1)%9], 2.f, dataLine);
+                for (int i = 0; i < 9; i++)
+                    if (gc[i] > 0) DrawCircleV(pts[i], 3.f, dataLine);
+
+                /* axis labels with counts */
+                float lsz = 9.f * gFontScale;
+                for (int i = 0; i < 9; i++) {
+                    char buf[16];
+                    snprintf(buf, sizeof(buf), "%s %d", kGradeLabels[i], gc[i]);
+                    float lr = R + 18.f;
+                    float lx = cx + dir[i].x * lr;
+                    float ly = cy + dir[i].y * lr;
+                    Vector2 ts = MeasureTextEx(gFonts[0], buf, lsz, 1.f);
+                    DrawTextEx(gFonts[0], buf,
+                               (Vector2){ lx - ts.x*0.5f, ly - ts.y*0.5f },
+                               lsz, 1.f, axisTxt);
+                }
             }
         }
 
@@ -510,7 +588,7 @@ int main(void)
         snprintf(fps, sizeof(fps), "FPS: %d", GetFPS());
         DrawTextEx(gFonts[0], fps,
                    (Vector2){ (float)(gScreenW - 80), 6.f }, 14.f, 1.f,
-                   (Color){ 80, 80, 120, 180 });
+                   (Color){ 122, 116, 104, 150 });
         EndDrawing();
     }
 
