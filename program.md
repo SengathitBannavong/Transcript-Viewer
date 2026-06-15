@@ -104,6 +104,10 @@ CPA below 2.0 is "Below classification" (not eligible to graduate).
   (best case all-A, worst passing case all-D).
 - **Graduate as** — pick a target tier. Tiers that are no longer mathematically
   reachable are dimmed and not selectable.
+- **How far into <tier>** — once a reachable tier is chosen, pick the ambition:
+  *Low* (just cross the floor, e.g. 2.50 for Good), *Medium* (mid-band), or
+  *High* ("every possible" — the top of the band). The required average and
+  per-subject target grades recompute to that CPA.
 - **Verdict** — for the chosen target: "secured", the average grade you must hold
   across your remaining credits to reach it, or "out of reach" with the highest tier
   still possible. Remaining credits and failed (F) subjects assumed retaken count as

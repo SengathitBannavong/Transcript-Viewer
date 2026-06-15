@@ -584,6 +584,14 @@ static void test_honor(void)
       gpa_to_letter(1.0f, &l, &p); CHECK(l=='D' && p==0,    "1.0 → D (min pass)");
     }
 
+    GROUP("honor_flex_target  (ambition within a tier's band)");
+    FCHECK(honor_tier_top(HONOR_GOOD),      3.19f, "Good band tops at 3.19");
+    FCHECK(honor_tier_top(HONOR_GOD),       4.00f, "God band tops at 4.00");
+    FCHECK(honor_flex_target(HONOR_GOOD, FLEX_LOW),  2.50f, "Good/low  = floor 2.50");
+    FCHECK(honor_flex_target(HONOR_GOOD, FLEX_HIGH), 3.19f, "Good/high = top 3.19");
+    FCHECK(honor_flex_target(HONOR_GOOD, FLEX_MED),  2.845f,"Good/med  = mid-band 2.845");
+    FCHECK(honor_flex_target(HONOR_GOD,  FLEX_HIGH), 4.00f, "God/high  = 4.00");
+
     GROUP("honor_target_plan  (needed avg over remaining credits)");
     {
         /* 60 of 120 credits passed at rate 3.0 → 60 credits remaining */

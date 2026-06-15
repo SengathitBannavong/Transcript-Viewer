@@ -56,9 +56,10 @@ static bool gDrawerOpen = false;  /* mobile sidebar drawer visibility           
 static bool gRowHover   = false;  /* a table row is hovered this frame → pointer */
 static bool gIsTouch    = false;  /* touch device (web only) → HTML keyboard bridge */
 
-/* Graduation Planner: chosen target honor tier (HONOR_NONE = none picked yet).
- * Read/written by RenderPlanner() in ui.c. */
+/* Graduation Planner: chosen target honor tier (HONOR_NONE = none picked yet)
+ * and the ambition within that tier's band. Read/written by RenderPlanner(). */
 static HonorTier gPlanTarget = HONOR_NONE;
+static FlexLevel gPlanFlex   = FLEX_LOW;
 
 /* per-frame dynamic string arena */
 #define DYN_BUF_SIZE 32768

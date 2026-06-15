@@ -406,10 +406,36 @@ typedef struct {
     int          need_plus;    /* whether that letter carries a '+'           */
 } TargetPlan;
 
-static TargetPlan honor_target_plan(const HonorProjection *hp, HonorTier target)
+/* Ambition within a chosen tier's band:
+ *   FLEX_LOW  → just cross the floor (e.g. Good = 2.50)
+ *   FLEX_MED  → mid-band
+ *   FLEX_HIGH → top of the band ("every possible" without bumping to the next tier)
+ */
+typedef enum { FLEX_LOW = 0, FLEX_MED = 1, FLEX_HIGH = 2 } FlexLevel;
+
+/* Top of a tier's band: just under the next tier's floor (God caps at 4.0). */
+static float honor_tier_top(HonorTier t)
+{
+    if (t >= HONOR_GOD) return 4.0f;
+    return kHonorFloor[t + 1] - 0.01f;
+}
+
+/* Target CPA for a tier at a given ambition level. */
+static float honor_flex_target(HonorTier tier, FlexLevel flex)
+{
+    float lo = kHonorFloor[tier];
+    float hi = honor_tier_top(tier);
+    switch (flex) {
+        case FLEX_HIGH: return hi;
+        case FLEX_MED:  return (lo + hi) * 0.5f;
+        default:        return lo;
+    }
+}
+
+/* Core feasibility math against an explicit target CPA `T`. */
+static TargetPlan honor_target_plan_at(const HonorProjection *hp, float T)
 {
     TargetPlan tp;
-    float T = kHonorFloor[target];
 
     if (hp->remaining <= 0) {
         /* nothing left to change — the current rate decides it */
@@ -434,4 +460,10 @@ static TargetPlan honor_target_plan(const HonorProjection *hp, HonorTier target)
         gpa_to_letter(need, &tp.need_letter, &tp.need_plus);
     }
     return tp;
+}
+
+/* Plan to just enter a tier (its floor) — the FLEX_LOW case. */
+static TargetPlan honor_target_plan(const HonorProjection *hp, HonorTier target)
+{
+    return honor_target_plan_at(hp, kHonorFloor[target]);
 }

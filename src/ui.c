@@ -886,7 +886,7 @@ static void RenderMainContent(void)
                             .width = { .left=1,.right=1,.top=1,.bottom=1 } },
             }) {
                 CLAY_TEXT(
-                    DS("Academic Alert  [Level %d — %s]  %d studied-but-failed credits",
+                    DS("Academic Alert  [Level %d - %s]  %d studied-but-failed credits",
                        (int)gPlayer.status_alert,
                        alert_label[gPlayer.status_alert],
                        gPlayer.ToTal_credit_npass),
@@ -1533,16 +1533,65 @@ static int plan_item_cmp(const void *a, const void *b)
 static const HonorTier kPlanTiers[4] =
     { HONOR_NORMAL, HONOR_GOOD, HONOR_EXCELLENT, HONOR_GOD };
 
+/* Ambition levels within a tier's band. */
+static const FlexLevel kPlanFlex[3]  = { FLEX_LOW, FLEX_MED, FLEX_HIGH };
+static const char     *kFlexName[3]  = { "Low", "Medium", "High" };
+static const char     *kFlexDesc[3]  = { "just reach it", "mid-band", "every possible" };
+
+/* Is subject type `t` still an OPEN graduation requirement whose remaining
+ * subjects should appear in the planner?  Driven entirely by gGradRules so the
+ * list matches the credit math — a satisfied requirement contributes nothing:
+ *   - sport (counted by subjects, no CPA effect)  → never
+ *   - type not offered in this major (no subjects)→ no
+ *   - pick-best module group                      → only the recommended
+ *       member (chosen[gid]), and only while the group is still unmet
+ *   - standalone type / elective pool             → only while its passed
+ *       credits are below its required limit
+ * `chosen[gid]` must already hold the recommended member of each group. */
+static bool plan_type_open(int t, const int *chosen)
+{
+    const GradRule     *r  = &gGradRules[t];
+    const Subject_Type *st = &gPlayer.numofSubjectType[t];
+    if (r->mode == GRAD_SUBJECT_COUNT) return false;
+    if (st->Total_Subject == 0)        return false;
+
+    if (r->group_id != 0) {
+        if (chosen[r->group_id] != t) return false;   /* not the picked module */
+        int best_pass = -1, best_limit = 0;
+        for (int j = 1; j < sizeSubjectType; j++) {
+            if (gGradRules[j].group_id != r->group_id) continue;
+            int pc  = (int)gPlayer.numofSubjectType[j].count_passCredit;
+            int lim = _sl_resolve_limit(&gPlayer, j);
+            if (pc > best_pass) { best_pass = pc; best_limit = lim; }
+        }
+        return best_pass < best_limit;                /* group still unmet     */
+    }
+    return (int)st->count_passCredit < _sl_resolve_limit(&gPlayer, t);
+}
+
 static void RenderPlanner(void)
 {
     HonorProjection hp = honor_project(&gPlayer);
 
-    /* ── collect remaining subjects (status_pass == 0) and rank them ── */
+    /* ── pick the recommended member of each pick-best module group ──
+     * (the one with the most passed credits so far; ties keep the first). */
+    int chosen[sizeSubjectType];
+    memset(chosen, 0, sizeof(chosen));
+    for (int t = 1; t < sizeSubjectType; t++) {
+        int gid = gGradRules[t].group_id;
+        if (gid <= 0 || gid >= sizeSubjectType) continue;
+        if (gPlayer.numofSubjectType[t].Total_Subject == 0) continue;
+        if (chosen[gid] == 0 ||
+            gPlayer.numofSubjectType[t].count_passCredit >
+            gPlayer.numofSubjectType[chosen[gid]].count_passCredit)
+            chosen[gid] = t;
+    }
+
+    /* ── collect remaining subjects from OPEN requirements only, then rank ── */
     static PlanItem items[160];
     int nItems = 0;
     for (int t = 1; t < sizeSubjectType; t++) {
-        /* sport (counted by subject, 0 credits) doesn't affect CPA/honor — skip it */
-        if (gGradRules[t].mode == GRAD_SUBJECT_COUNT) continue;
+        if (!plan_type_open(t, chosen)) continue;   /* satisfied/irrelevant → skip */
         for (Subject_Node *n = gPlayer.numofSubjectType[t].head; n; n = n->next) {
             if (n->status_pass) continue;
             if (nItems < (int)(sizeof(items) / sizeof(items[0]))) {
@@ -1554,8 +1603,12 @@ static void RenderPlanner(void)
     }
     qsort(items, (size_t)nItems, sizeof(items[0]), plan_item_cmp);
 
-    bool       haveTarget = (gPlanTarget != HONOR_NONE);
-    TargetPlan tp = haveTarget ? honor_target_plan(&hp, gPlanTarget)
+    bool  haveTarget = (gPlanTarget != HONOR_NONE);
+    /* the tier is reachable at all only if its floor (low ambition) is */
+    bool  tierReachable = haveTarget &&
+        honor_target_plan(&hp, gPlanTarget).status != TARGET_IMPOSSIBLE;
+    float flexT = haveTarget ? honor_flex_target(gPlanTarget, gPlanFlex) : 0.f;
+    TargetPlan tp = haveTarget ? honor_target_plan_at(&hp, flexT)
                                : (TargetPlan){0};
 
     CLAY(CLAY_ID("Planner"), {
@@ -1603,7 +1656,7 @@ static void RenderPlanner(void)
                              honor_name(hp.worst), honor_name(hp.best)),
                           TC(C_TEXT, 10));
             else
-                CLAY_TEXT(CLAY_STRING("All required credits earned — this is your final standing."),
+                CLAY_TEXT(CLAY_STRING("All required credits earned - this is your final standing."),
                           TC(C_TEXT, 10));
         }
 
@@ -1611,6 +1664,13 @@ static void RenderPlanner(void)
         CLAY(CLAY_ID("PlanPickLbl"), {
             .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) } },
         }) { CLAY_TEXT(CLAY_STRING("GRADUATE AS"), TC(C_SUBTEXT, 9)); }
+
+        /* Deterministic widths: a row of equal GROW children collapses in this
+         * Clay build (only one keeps width), so size the four buttons FIXED off
+         * the content width. Mobile stacks them, where single-column GROW is safe. */
+        float pickAvail = (float)(gIsMobile ? gScreenW : gScreenW - SIDEBAR_W) - 48.f;
+        if (pickAvail < 80.f) pickAvail = 80.f;
+        float pickBtnW = (pickAvail - 3.f * SP_SM) / 4.f;
 
         CLAY(CLAY_ID("PlanPick"), {
             .layout = {
@@ -1627,7 +1687,9 @@ static void RenderPlanner(void)
 
                 CLAY(CLAY_IDI("PlanTgt", b), {
                     .layout = {
-                        .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(54) },
+                        .sizing          = { gIsMobile ? CLAY_SIZING_GROW(0)
+                                                       : CLAY_SIZING_FIXED(pickBtnW),
+                                             CLAY_SIZING_FIXED(54) },
                         .padding         = { 12, 12, 8, 8 },
                         .childGap        = 2,
                         .childAlignment  = { .x = CLAY_ALIGN_X_CENTER },
@@ -1643,8 +1705,57 @@ static void RenderPlanner(void)
                         gPlanTarget = tier;
                     Clay_Color tcol = active ? C_WHITE : (imposs ? C_SUBTEXT : col);
                     CLAY_TEXT(CS(honor_name(tier)), TC(tcol, 12));
-                    CLAY_TEXT(DS("CPA %.1f+%s", kHonorFloor[tier], imposs ? "  ·  out of reach" : ""),
+                    CLAY_TEXT(DS("CPA %.1f+", kHonorFloor[tier]),
                               TC(active ? C_WHITE : C_SUBTEXT, 8));
+                    if (imposs)
+                        CLAY_TEXT(CLAY_STRING("out of reach"),
+                                  TC(active ? C_WHITE : C_SUBTEXT, 8));
+                }
+            }
+        }
+
+        /* ── Ambition (flex) selector — how hard to push within the tier ── */
+        if (haveTarget && tierReachable) {
+            CLAY(CLAY_ID("PlanFlexLbl"), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) } },
+            }) { CLAY_TEXT(DS("HOW FAR INTO %s", honor_name(gPlanTarget)),
+                           TC(C_SUBTEXT, 9)); }
+
+            float flexBtnW = (pickAvail - 2.f * SP_SM) / 3.f;
+            Clay_Color tcol = honor_color(gPlanTarget);
+
+            CLAY(CLAY_ID("PlanFlex"), {
+                .layout = {
+                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                    .childGap        = SP_SM,
+                    .layoutDirection = gIsMobile ? CLAY_TOP_TO_BOTTOM : CLAY_LEFT_TO_RIGHT,
+                },
+            }) {
+                for (int f = 0; f < 3; f++) {
+                    bool  fa = (gPlanFlex == kPlanFlex[f]);
+                    float ft = honor_flex_target(gPlanTarget, kPlanFlex[f]);
+                    CLAY(CLAY_IDI("PlanFlexBtn", f), {
+                        .layout = {
+                            .sizing          = { gIsMobile ? CLAY_SIZING_GROW(0)
+                                                           : CLAY_SIZING_FIXED(flexBtnW),
+                                                 CLAY_SIZING_FIXED(50) },
+                            .padding         = { 10, 10, 6, 6 },
+                            .childGap        = 2,
+                            .childAlignment  = { .x = CLAY_ALIGN_X_CENTER },
+                            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                        },
+                        .backgroundColor = fa ? tcol
+                                         : (Clay_Hovered() ? C_ROW_HOVER : C_CARD),
+                        .cornerRadius    = CLAY_CORNER_RADIUS(4),
+                        .border          = { .color = tcol,
+                                             .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+                    }) {
+                        if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
+                            gPlanFlex = kPlanFlex[f];
+                        CLAY_TEXT(DS("%s  (CPA %.2f)", kFlexName[f], ft),
+                                  TC(fa ? C_WHITE : tcol, 11));
+                        CLAY_TEXT(CS(kFlexDesc[f]), TC(fa ? C_WHITE : C_SUBTEXT, 8));
+                    }
                 }
             }
         }
@@ -1658,7 +1769,7 @@ static void RenderPlanner(void)
             } else if (tp.status == TARGET_SECURED) {
                 vbg = C_GREEN_BG; vbd = C_GREEN;
                 vtxt = (hp.remaining > 0)
-                     ? DS("%s is secured — just pass your remaining %d credits.",
+                     ? DS("%s is secured - just pass your remaining %d credits.",
                           honor_name(gPlanTarget), hp.remaining)
                      : DS("%s is already locked in.", honor_name(gPlanTarget));
             } else if (tp.status == TARGET_REACHABLE) {
@@ -1668,7 +1779,7 @@ static void RenderPlanner(void)
                           tp.need_letter, tp.need_plus ? "+" : "", hp.remaining);
             } else { /* IMPOSSIBLE */
                 vbg = C_RED_BG; vbd = C_RED;
-                vtxt = DS("%s is out of reach now — the highest you can still earn is %s.",
+                vtxt = DS("%s is out of reach now - the highest you can still earn is %s.",
                           honor_name(gPlanTarget), honor_name(hp.best));
             }
             CLAY(CLAY_ID("PlanVerdict"), {
@@ -1696,7 +1807,7 @@ static void RenderPlanner(void)
                 .cornerRadius    = CLAY_CORNER_RADIUS(4),
                 .border          = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } },
             }) {
-                CLAY_TEXT(CLAY_STRING("Nothing left — every subject is passed. Congratulations!"),
+                CLAY_TEXT(CLAY_STRING("Nothing left - every subject is passed. Congratulations!"),
                           TC(C_GREEN, 12));
             }
         }
@@ -1706,8 +1817,8 @@ static void RenderPlanner(void)
             int  ty      = items[i].type;
             bool failed  = (n->score_letter == 'F');
             bool isOdd   = (i % 2 != 0);
-            bool pool    = (gGradRules[ty].group_id != 0) ||
-                           (gGradRules[ty].mode == GRAD_FIXED);
+            /* genuine free choice = elective pool; the picked module is committed */
+            bool pool    = (gGradRules[ty].mode == GRAD_FIXED);
             bool sport   = (gGradRules[ty].mode == GRAD_SUBJECT_COUNT);
             bool impact  = !sport && n->credit >= 3;
 
