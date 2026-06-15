@@ -56,6 +56,11 @@ static bool gDrawerOpen = false;  /* mobile sidebar drawer visibility           
 static bool gRowHover   = false;  /* a table row is hovered this frame → pointer */
 static bool gIsTouch    = false;  /* touch device (web only) → HTML keyboard bridge */
 
+/* Graduation Planner: chosen target honor tier (HONOR_NONE = none picked yet)
+ * and the ambition within that tier's band. Read/written by RenderPlanner(). */
+static HonorTier gPlanTarget = HONOR_NONE;
+static FlexLevel gPlanFlex   = FLEX_LOW;
+
 /* per-frame dynamic string arena */
 #define DYN_BUF_SIZE 32768
 static char gDynBuf[DYN_BUF_SIZE];
@@ -256,6 +261,8 @@ static void BuildLayout(void)
             else           RenderSidebar();
             if (gActiveNav == 0)
                 RenderDashboard();
+            else if (gActiveNav == NAV_PLANNER)
+                RenderPlanner();
             else
                 RenderMainContent();
         }

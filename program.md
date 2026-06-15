@@ -77,6 +77,45 @@ Open with **Ctrl + K**, then type a command and press **Enter**.
 
 ---
 
+## Graduation Planner
+
+Open from the **Planner** entry in the sidebar (below Dashboard). It forecasts the
+honor tier you're heading toward and shows how to reach a tier you choose.
+
+### Honor tiers (CPA on the 4.0 scale)
+
+| Tier         | CPA band   |
+|--------------|------------|
+| Normal       | 2.0 – 2.49 |
+| Good         | 2.5 – 3.19 |
+| Excellent    | 3.2 – 3.59 |
+| God of HUST  | 3.6 – 4.0  |
+
+CPA below 2.0 is "Below classification" (not eligible to graduate).
+
+> **Scale note:** grade → GPA uses the true HUST 4.0 scale — A and A+ both = 4.0,
+> B+ 3.5, B 3.0, C+ 2.5, C 2.0, D+ 1.5, D 1.0, F/X 0.0. So the CPA can never exceed
+> 4.0 and the honor bands line up exactly.
+
+### What it shows
+
+- **Projected honor** — your pass-only CPA classified into a tier ("if you keep your
+  current average"), plus the range still reachable given the credits you have left
+  (best case all-A, worst passing case all-D).
+- **Graduate as** — pick a target tier. Tiers that are no longer mathematically
+  reachable are dimmed and not selectable.
+- **How far into <tier>** — once a reachable tier is chosen, pick the ambition:
+  *Low* (just cross the floor, e.g. 2.50 for Good), *Medium* (mid-band), or
+  *High* ("every possible" — the top of the band). The required average and
+  per-subject target grades recompute to that CPA.
+- **Verdict** — for the chosen target: "secured", the average grade you must hold
+  across your remaining credits to reach it, or "out of reach" with the highest tier
+  still possible. Remaining credits and failed (F) subjects assumed retaken count as
+  the work ahead.
+- **What to learn next** — every not-yet-passed subject, ranked failed-retakes-first,
+  then by recommended term, then by credit. High-credit subjects are tagged
+  "high impact"; each shows the target grade implied by your chosen tier.
+
 ## Window
 
 | Action | Effect |

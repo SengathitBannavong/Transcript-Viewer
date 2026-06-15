@@ -25,6 +25,10 @@
  * priority columns). gIsMobile (main.c) is recomputed from gScreenW each frame. */
 #define BP_MOBILE   900
 
+/* Pseudo-nav index for the Graduation Planner view (sits past the real subject
+ * types so the sidebar's 1..sizeSubjectType-1 loop never auto-renders it). */
+#define NAV_PLANNER (sizeSubjectType)
+
 /* ─── Spacing scale ──────────────────────────────────────────────────────
  * One scale, used deliberately: tight gaps bind a group, generous gaps
  * separate sections. Rhythm comes from choosing, not from a single value.
@@ -145,7 +149,10 @@ static void RenderNavItem(int idx, const char *label, int warn)
             .backgroundColor = active ? C_ACCENT_DIM : C_BORDER,
             .cornerRadius    = CLAY_CORNER_RADIUS(4),
         }) {
-            CLAY_TEXT(DS("%d", idx), TC(active ? C_WHITE : C_SUBTEXT, 9));
+            if (idx == NAV_PLANNER)
+                CLAY_TEXT(CLAY_STRING("P"), TC(active ? C_WHITE : C_SUBTEXT, 9));
+            else
+                CLAY_TEXT(DS("%d", idx), TC(active ? C_WHITE : C_SUBTEXT, 9));
         }
         CLAY_TEXT(CS(label), TC(tc, 10));
 
@@ -220,8 +227,9 @@ static void RenderSidebar(void)
             },
         }) { CLAY_TEXT(CLAY_STRING("SUBJECT TYPES"), TC(C_SUBTEXT, 9)); }
 
-        /* Dashboard nav item (index 0) */
+        /* Dashboard + Planner — overview views, not subject types */
         RenderNavItem(0, "Dashboard", 0);
+        RenderNavItem(NAV_PLANNER, "Planner", 0);
 
         /* one nav item per subject type — only show types that have subjects */
         {
@@ -388,7 +396,9 @@ static void RenderTopBar(void)
         }
 
         /* Active section title */
-        const char *title = (gActiveNav == 0) ? "Dashboard" : gTypeName[gActiveNav];
+        const char *title = (gActiveNav == 0)          ? "Dashboard"
+                          : (gActiveNav == NAV_PLANNER) ? "Planner"
+                          :                               gTypeName[gActiveNav];
         CLAY_TEXT(CS(title), TC(C_TEXT, 16));
     }
 }
@@ -876,7 +886,7 @@ static void RenderMainContent(void)
                             .width = { .left=1,.right=1,.top=1,.bottom=1 } },
             }) {
                 CLAY_TEXT(
-                    DS("Academic Alert  [Level %d — %s]  %d studied-but-failed credits",
+                    DS("Academic Alert  [Level %d - %s]  %d studied-but-failed credits",
                        (int)gPlayer.status_alert,
                        alert_label[gPlayer.status_alert],
                        gPlayer.ToTal_credit_npass),
@@ -1036,6 +1046,18 @@ static Clay_Color grade_band_color(int b)
     }
 }
 
+/* Honor tier → accent color (used by the Dashboard line and the Planner). */
+static Clay_Color honor_color(HonorTier t)
+{
+    switch (t) {
+        case HONOR_GOD:       return C_ACCENT;                  /* oxblood — top */
+        case HONOR_EXCELLENT: return C_GREEN;
+        case HONOR_GOOD:      return (Clay_Color){ 52, 88, 138, 255};  /* navy */
+        case HONOR_NORMAL:    return C_YELLOW;                  /* ochre         */
+        default:              return C_SUBTEXT;                 /* below class.  */
+    }
+}
+
 /* Count studied subjects into the nine buckets. Visible to main.c (which
  * #includes this file) for drawing the radar polygon. */
 static void calc_grade_counts(int out[9])
@@ -1175,6 +1197,14 @@ static void RenderDashboard(void)
                 CLAY_TEXT(DS("%d of %d required credits  (%d%%)",
                              eff, req, (int)(prog * 100.f + 0.5f)),
                           TC(C_SUBTEXT, 10));
+                /* projected honor tier — ties the Planner forecast into the
+                 * main screen (click "Planner" to plan toward a target) */
+                {
+                    HonorProjection _hp = honor_project(&gPlayer);
+                    CLAY_TEXT(DS("Projected honor: %s  (CPA %.2f)",
+                                 honor_name(_hp.projected), _hp.rate),
+                              TC(honor_color(_hp.projected), 10));
+                }
             }
 
             /* Supporting: stat ledger, one panel with hairline dividers */
@@ -1469,6 +1499,391 @@ static void RenderDashboard(void)
                             }) { CLAY_TEXT(DS("%d", gc[b]),
                                            TC(gc[b] > 0 ? C_TEXT : C_SUBTEXT, 11)); }
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  GRADUATION PLANNER
+ *  Honor-tier forecast + target feasibility + ranked remaining-subject guide.
+ *  All math lives in score_logic.h (honor_project / honor_target_plan).
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* One remaining (not-yet-passed) subject plus its subject-type id. */
+typedef struct { Subject_Node *node; int type; } PlanItem;
+
+/* Ranking: failed retakes first, then earlier recommended term, then higher
+ * credit (more CPA leverage). */
+static int plan_item_cmp(const void *a, const void *b)
+{
+    const PlanItem *x = (const PlanItem *)a, *y = (const PlanItem *)b;
+    int xf = (x->node->score_letter == 'F');
+    int yf = (y->node->score_letter == 'F');
+    if (xf != yf) return yf - xf;                                  /* F first   */
+    int xt = (int)x->node->term_recomment_to_studie;
+    int yt = (int)y->node->term_recomment_to_studie;
+    if (xt != yt) return xt - yt;                                  /* term asc  */
+    return (int)y->node->credit - (int)x->node->credit;            /* credit ↓  */
+}
+
+/* The four selectable honor tiers, low → high. */
+static const HonorTier kPlanTiers[4] =
+    { HONOR_NORMAL, HONOR_GOOD, HONOR_EXCELLENT, HONOR_GOD };
+
+/* Ambition levels within a tier's band. */
+static const FlexLevel kPlanFlex[3]  = { FLEX_LOW, FLEX_MED, FLEX_HIGH };
+static const char     *kFlexName[3]  = { "Low", "Medium", "High" };
+static const char     *kFlexDesc[3]  = { "just reach it", "mid-band", "every possible" };
+
+/* Is subject type `t` still an OPEN graduation requirement whose remaining
+ * subjects should appear in the planner?  Driven entirely by gGradRules so the
+ * list matches the credit math — a satisfied requirement contributes nothing:
+ *   - sport (counted by subjects, no CPA effect)  → never
+ *   - type not offered in this major (no subjects)→ no
+ *   - pick-best module group                      → only the recommended
+ *       member (chosen[gid]), and only while the group is still unmet
+ *   - standalone type / elective pool             → only while its passed
+ *       credits are below its required limit
+ * `chosen[gid]` must already hold the recommended member of each group. */
+static bool plan_type_open(int t, const int *chosen)
+{
+    const GradRule     *r  = &gGradRules[t];
+    const Subject_Type *st = &gPlayer.numofSubjectType[t];
+    if (r->mode == GRAD_SUBJECT_COUNT) return false;
+    if (st->Total_Subject == 0)        return false;
+
+    if (r->group_id != 0) {
+        if (chosen[r->group_id] != t) return false;   /* not the picked module */
+        int best_pass = -1, best_limit = 0;
+        for (int j = 1; j < sizeSubjectType; j++) {
+            if (gGradRules[j].group_id != r->group_id) continue;
+            int pc  = (int)gPlayer.numofSubjectType[j].count_passCredit;
+            int lim = _sl_resolve_limit(&gPlayer, j);
+            if (pc > best_pass) { best_pass = pc; best_limit = lim; }
+        }
+        return best_pass < best_limit;                /* group still unmet     */
+    }
+    return (int)st->count_passCredit < _sl_resolve_limit(&gPlayer, t);
+}
+
+static void RenderPlanner(void)
+{
+    HonorProjection hp = honor_project(&gPlayer);
+
+    /* ── pick the recommended member of each pick-best module group ──
+     * (the one with the most passed credits so far; ties keep the first). */
+    int chosen[sizeSubjectType];
+    memset(chosen, 0, sizeof(chosen));
+    for (int t = 1; t < sizeSubjectType; t++) {
+        int gid = gGradRules[t].group_id;
+        if (gid <= 0 || gid >= sizeSubjectType) continue;
+        if (gPlayer.numofSubjectType[t].Total_Subject == 0) continue;
+        if (chosen[gid] == 0 ||
+            gPlayer.numofSubjectType[t].count_passCredit >
+            gPlayer.numofSubjectType[chosen[gid]].count_passCredit)
+            chosen[gid] = t;
+    }
+
+    /* ── collect remaining subjects from OPEN requirements only, then rank ── */
+    static PlanItem items[160];
+    int nItems = 0;
+    for (int t = 1; t < sizeSubjectType; t++) {
+        if (!plan_type_open(t, chosen)) continue;   /* satisfied/irrelevant → skip */
+        for (Subject_Node *n = gPlayer.numofSubjectType[t].head; n; n = n->next) {
+            if (n->status_pass) continue;
+            if (nItems < (int)(sizeof(items) / sizeof(items[0]))) {
+                items[nItems].node = n;
+                items[nItems].type = t;
+                nItems++;
+            }
+        }
+    }
+    qsort(items, (size_t)nItems, sizeof(items[0]), plan_item_cmp);
+
+    bool  haveTarget = (gPlanTarget != HONOR_NONE);
+    /* the tier is reachable at all only if its floor (low ambition) is */
+    bool  tierReachable = haveTarget &&
+        honor_target_plan(&hp, gPlanTarget).status != TARGET_IMPOSSIBLE;
+    float flexT = haveTarget ? honor_flex_target(gPlanTarget, gPlanFlex) : 0.f;
+    TargetPlan tp = haveTarget ? honor_target_plan_at(&hp, flexT)
+                               : (TargetPlan){0};
+
+    CLAY(CLAY_ID("Planner"), {
+        .layout = {
+            .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+            .padding         = { 24, 24, 20, 20 },
+            .childGap        = SP_LG,
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+        },
+        .backgroundColor = C_BG,
+        .clip = { .vertical = true, .childOffset = Clay_GetScrollOffset() },
+    }) {
+
+        /* ── Title ── */
+        CLAY(CLAY_ID("PlanHdr"), {
+            .layout = { .sizing = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIT(0) },
+                        .childGap = SP_XS, .layoutDirection = CLAY_TOP_TO_BOTTOM },
+        }) {
+            CLAY_TEXT(CLAY_STRING("Graduation Planner"), TC(C_TEXT, 26));
+            CLAY_TEXT(CLAY_STRING("Where you're headed, and how to reach the honor you want"),
+                      TC(C_SUBTEXT, 11));
+        }
+
+        /* ── Standing card: projected tier + reachable range + credits ── */
+        CLAY(CLAY_ID("PlanStanding"), {
+            .layout = {
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .padding         = { 20, 20, 18, 18 },
+                .childGap        = SP_SM,
+                .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            },
+            .backgroundColor = C_CARD,
+            .cornerRadius    = CLAY_CORNER_RADIUS(4),
+            .border          = { .color = honor_color(hp.projected),
+                                 .width = { .left = 3, .top = 1, .right = 1, .bottom = 1 } },
+        }) {
+            CLAY_TEXT(CLAY_STRING("PROJECTED HONOR  (if you keep your current average)"),
+                      TC(C_SUBTEXT, 9));
+            CLAY_TEXT(CS(honor_name(hp.projected)), TC(honor_color(hp.projected), 24));
+            CLAY_TEXT(DS("Pass-only CPA %.2f   ·   %d of %d required credits   ·   %d remaining",
+                         hp.rate, hp.eff, hp.req, hp.remaining),
+                      TC(C_SUBTEXT, 10));
+            if (hp.remaining > 0)
+                CLAY_TEXT(DS("Still reachable: %s  to  %s",
+                             honor_name(hp.worst), honor_name(hp.best)),
+                          TC(C_TEXT, 10));
+            else
+                CLAY_TEXT(CLAY_STRING("All required credits earned - this is your final standing."),
+                          TC(C_TEXT, 10));
+        }
+
+        /* ── Target picker ── */
+        CLAY(CLAY_ID("PlanPickLbl"), {
+            .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) } },
+        }) { CLAY_TEXT(CLAY_STRING("GRADUATE AS"), TC(C_SUBTEXT, 9)); }
+
+        /* Deterministic widths: a row of equal GROW children collapses in this
+         * Clay build (only one keeps width), so size the four buttons FIXED off
+         * the content width. Mobile stacks them, where single-column GROW is safe. */
+        float pickAvail = (float)(gIsMobile ? gScreenW : gScreenW - SIDEBAR_W) - 48.f;
+        if (pickAvail < 80.f) pickAvail = 80.f;
+        float pickBtnW = (pickAvail - 3.f * SP_SM) / 4.f;
+
+        CLAY(CLAY_ID("PlanPick"), {
+            .layout = {
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .childGap        = SP_SM,
+                .layoutDirection = gIsMobile ? CLAY_TOP_TO_BOTTOM : CLAY_LEFT_TO_RIGHT,
+            },
+        }) {
+            for (int b = 0; b < 4; b++) {
+                HonorTier tier = kPlanTiers[b];
+                bool   active  = (gPlanTarget == tier);
+                bool   imposs  = (honor_target_plan(&hp, tier).status == TARGET_IMPOSSIBLE);
+                Clay_Color col = honor_color(tier);
+
+                CLAY(CLAY_IDI("PlanTgt", b), {
+                    .layout = {
+                        .sizing          = { gIsMobile ? CLAY_SIZING_GROW(0)
+                                                       : CLAY_SIZING_FIXED(pickBtnW),
+                                             CLAY_SIZING_FIXED(54) },
+                        .padding         = { 12, 12, 8, 8 },
+                        .childGap        = 2,
+                        .childAlignment  = { .x = CLAY_ALIGN_X_CENTER },
+                        .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                    },
+                    .backgroundColor = active ? col
+                                     : (Clay_Hovered() && !imposs ? C_ROW_HOVER : C_CARD),
+                    .cornerRadius    = CLAY_CORNER_RADIUS(4),
+                    .border          = { .color = imposs ? C_BORDER : col,
+                                         .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+                }) {
+                    if (Clay_Hovered() && !imposs && IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
+                        gPlanTarget = tier;
+                    Clay_Color tcol = active ? C_WHITE : (imposs ? C_SUBTEXT : col);
+                    CLAY_TEXT(CS(honor_name(tier)), TC(tcol, 12));
+                    CLAY_TEXT(DS("CPA %.1f+", kHonorFloor[tier]),
+                              TC(active ? C_WHITE : C_SUBTEXT, 8));
+                    if (imposs)
+                        CLAY_TEXT(CLAY_STRING("out of reach"),
+                                  TC(active ? C_WHITE : C_SUBTEXT, 8));
+                }
+            }
+        }
+
+        /* ── Ambition (flex) selector — how hard to push within the tier ── */
+        if (haveTarget && tierReachable) {
+            CLAY(CLAY_ID("PlanFlexLbl"), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) } },
+            }) { CLAY_TEXT(DS("HOW FAR INTO %s", honor_name(gPlanTarget)),
+                           TC(C_SUBTEXT, 9)); }
+
+            float flexBtnW = (pickAvail - 2.f * SP_SM) / 3.f;
+            Clay_Color tcol = honor_color(gPlanTarget);
+
+            CLAY(CLAY_ID("PlanFlex"), {
+                .layout = {
+                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                    .childGap        = SP_SM,
+                    .layoutDirection = gIsMobile ? CLAY_TOP_TO_BOTTOM : CLAY_LEFT_TO_RIGHT,
+                },
+            }) {
+                for (int f = 0; f < 3; f++) {
+                    bool  fa = (gPlanFlex == kPlanFlex[f]);
+                    float ft = honor_flex_target(gPlanTarget, kPlanFlex[f]);
+                    CLAY(CLAY_IDI("PlanFlexBtn", f), {
+                        .layout = {
+                            .sizing          = { gIsMobile ? CLAY_SIZING_GROW(0)
+                                                           : CLAY_SIZING_FIXED(flexBtnW),
+                                                 CLAY_SIZING_FIXED(50) },
+                            .padding         = { 10, 10, 6, 6 },
+                            .childGap        = 2,
+                            .childAlignment  = { .x = CLAY_ALIGN_X_CENTER },
+                            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                        },
+                        .backgroundColor = fa ? tcol
+                                         : (Clay_Hovered() ? C_ROW_HOVER : C_CARD),
+                        .cornerRadius    = CLAY_CORNER_RADIUS(4),
+                        .border          = { .color = tcol,
+                                             .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+                    }) {
+                        if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
+                            gPlanFlex = kPlanFlex[f];
+                        CLAY_TEXT(DS("%s  (CPA %.2f)", kFlexName[f], ft),
+                                  TC(fa ? C_WHITE : tcol, 11));
+                        CLAY_TEXT(CS(kFlexDesc[f]), TC(fa ? C_WHITE : C_SUBTEXT, 8));
+                    }
+                }
+            }
+        }
+
+        /* ── Verdict ── */
+        {
+            Clay_Color vbg = C_CARD; Clay_Color vbd = C_BORDER;
+            Clay_String vtxt;
+            if (!haveTarget) {
+                vtxt = CLAY_STRING("Pick a target above to see the average and the per-subject grades you need.");
+            } else if (tp.status == TARGET_SECURED) {
+                vbg = C_GREEN_BG; vbd = C_GREEN;
+                vtxt = (hp.remaining > 0)
+                     ? DS("%s is secured - just pass your remaining %d credits.",
+                          honor_name(gPlanTarget), hp.remaining)
+                     : DS("%s is already locked in.", honor_name(gPlanTarget));
+            } else if (tp.status == TARGET_REACHABLE) {
+                vbd = honor_color(gPlanTarget);
+                vtxt = DS("To graduate %s: average at least %.2f (about %c%s) across your %d remaining credits.",
+                          honor_name(gPlanTarget), tp.needed_avg,
+                          tp.need_letter, tp.need_plus ? "+" : "", hp.remaining);
+            } else { /* IMPOSSIBLE */
+                vbg = C_RED_BG; vbd = C_RED;
+                vtxt = DS("%s is out of reach now - the highest you can still earn is %s.",
+                          honor_name(gPlanTarget), honor_name(hp.best));
+            }
+            CLAY(CLAY_ID("PlanVerdict"), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                            .padding = { 16, 16, 12, 12 } },
+                .backgroundColor = vbg,
+                .cornerRadius    = CLAY_CORNER_RADIUS(4),
+                .border          = { .color = vbd, .width = { .left=3,.top=1,.right=1,.bottom=1 } },
+            }) { CLAY_TEXT(vtxt, TCW(C_TEXT, 12)); }
+        }
+
+        /* ── Remaining-subject list ── */
+        CLAY(CLAY_ID("PlanListLbl"), {
+            .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) } },
+        }) {
+            CLAY_TEXT(DS("WHAT TO LEARN NEXT  ·  %d subjects left  (failed retakes first, then by term)",
+                         nItems), TC(C_SUBTEXT, 9));
+        }
+
+        if (nItems == 0) {
+            CLAY(CLAY_ID("PlanEmpty"), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                            .padding = { 16, 16, 16, 16 } },
+                .backgroundColor = C_CARD,
+                .cornerRadius    = CLAY_CORNER_RADIUS(4),
+                .border          = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+            }) {
+                CLAY_TEXT(CLAY_STRING("Nothing left - every subject is passed. Congratulations!"),
+                          TC(C_GREEN, 12));
+            }
+        }
+
+        for (int i = 0; i < nItems; i++) {
+            Subject_Node *n = items[i].node;
+            int  ty      = items[i].type;
+            bool failed  = (n->score_letter == 'F');
+            bool isOdd   = (i % 2 != 0);
+            /* genuine free choice = elective pool; the picked module is committed */
+            bool pool    = (gGradRules[ty].mode == GRAD_FIXED);
+            bool sport   = (gGradRules[ty].mode == GRAD_SUBJECT_COUNT);
+            bool impact  = !sport && n->credit >= 3;
+
+            CLAY(CLAY_IDI("PlanRow", i), {
+                .layout = {
+                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(ROW_H) },
+                    .padding         = { 12, 12, 0, 0 },
+                    .childGap        = SP_SM,
+                    .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                    .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                },
+                .backgroundColor = isOdd ? C_ROW_ODD : C_ROW_EVEN,
+                .border = { .color = failed ? C_RED : C_BORDER,
+                            .width = { .left = failed ? 3 : 0, .bottom = 1 } },
+            }) {
+                /* recommended term (desktop only) */
+                if (!gIsMobile)
+                    CLAY_TEXT(DS("T%u", n->term_recomment_to_studie), TC(C_SUBTEXT, 10));
+                /* code (desktop only) */
+                if (!gIsMobile)
+                    CLAY_TEXT(DS("%s", n->ID), TC(C_SUBTEXT, 10));
+                /* name (grows) */
+                CLAY(CLAY_IDI("PlanRowName", i), {
+                    .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) } },
+                }) { CLAY_TEXT(DS("%s", n->name), TC(C_TEXT, 11)); }
+
+                /* high-impact tag */
+                if (impact && haveTarget && tp.status == TARGET_REACHABLE) {
+                    CLAY(CLAY_IDI("PlanImpact", i), {
+                        .layout = { .padding = { 6, 6, 2, 2 } },
+                        .backgroundColor = C_ACCENT_BG,
+                        .cornerRadius    = CLAY_CORNER_RADIUS(3),
+                    }) { CLAY_TEXT(CLAY_STRING("high impact"), TC(C_ACCENT, 8)); }
+                }
+                /* elective/module hint (desktop only) */
+                if (pool && !gIsMobile)
+                    CLAY_TEXT(CLAY_STRING("optional"), TC(C_SUBTEXT, 8));
+
+                /* credit (desktop only) */
+                if (!gIsMobile)
+                    CLAY_TEXT(DS("%ucr", n->credit), TC(C_SUBTEXT, 10));
+
+                /* status chip */
+                CLAY(CLAY_IDI("PlanStat", i), {
+                    .layout = { .padding = { 6, 6, 2, 2 } },
+                    .backgroundColor = failed ? C_RED_BG : C_TBL_HDR,
+                    .cornerRadius    = CLAY_CORNER_RADIUS(3),
+                }) {
+                    CLAY_TEXT(failed ? CLAY_STRING("Retake") : CLAY_STRING("Not started"),
+                              TC(failed ? C_RED : C_SUBTEXT, 9));
+                }
+
+                /* target-grade chip — only when a reachable/secured target is set */
+                if (haveTarget &&
+                    (tp.status == TARGET_REACHABLE || tp.status == TARGET_SECURED)) {
+                    Clay_String g = sport ? CLAY_STRING("Pass")
+                                          : DS("%c%s", tp.need_letter, tp.need_plus ? "+" : "");
+                    char gl[2] = { tp.need_letter, 0 };
+                    CLAY(CLAY_IDI("PlanGoal", i), {
+                        .layout = { .padding = { 6, 6, 2, 2 } },
+                        .backgroundColor = C_CARD,
+                        .cornerRadius    = CLAY_CORNER_RADIUS(3),
+                        .border = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+                    }) {
+                        CLAY_TEXT(g, TC(sport ? C_GREEN : score_color(gl), 10));
                     }
                 }
             }

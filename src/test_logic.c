@@ -235,7 +235,7 @@ static void test_score_to_gpa(void)
 {
     GROUP("score_to_gpa");
     FCHECK(score_to_gpa('A', 0), 4.0f, "A   = 4.0");
-    FCHECK(score_to_gpa('A', 1), 4.5f, "A+  = 4.5");
+    FCHECK(score_to_gpa('A', 1), 4.0f, "A+  = 4.0 (caps at 4.0 on true 4.0 scale)");
     FCHECK(score_to_gpa('B', 0), 3.0f, "B   = 3.0");
     FCHECK(score_to_gpa('B', 1), 3.5f, "B+  = 3.5");
     FCHECK(score_to_gpa('C', 0), 2.0f, "C   = 2.0");
@@ -562,6 +562,83 @@ static void test_db_validate(void)
     if (gDB) { sqlite3_close(gDB); gDB = NULL; }
 }
 
+/* ── 9. honor classification + projection ─────────────────────────────── */
+static void test_honor(void)
+{
+    GROUP("honor_tier  (bands: <2.0 none, 2.0 normal, 2.5 good, 3.2 excellent, 3.6 god)");
+    CHECK(honor_tier(1.99f) == HONOR_NONE,      "1.99 → none");
+    CHECK(honor_tier(2.00f) == HONOR_NORMAL,    "2.00 → normal (boundary)");
+    CHECK(honor_tier(2.49f) == HONOR_NORMAL,    "2.49 → normal");
+    CHECK(honor_tier(2.50f) == HONOR_GOOD,      "2.50 → good (boundary)");
+    CHECK(honor_tier(3.19f) == HONOR_GOOD,      "3.19 → good");
+    CHECK(honor_tier(3.20f) == HONOR_EXCELLENT, "3.20 → excellent (boundary)");
+    CHECK(honor_tier(3.59f) == HONOR_EXCELLENT, "3.59 → excellent");
+    CHECK(honor_tier(3.60f) == HONOR_GOD,       "3.60 → god (boundary)");
+    CHECK(honor_tier(4.00f) == HONOR_GOD,       "4.00 → god");
+
+    GROUP("gpa_to_letter  (smallest grade meeting a needed average)");
+    { char l; int p;
+      gpa_to_letter(4.0f, &l, &p); CHECK(l=='A',            "4.0 → A");
+      gpa_to_letter(3.4f, &l, &p); CHECK(l=='B' && p==1,    "3.4 → B+");
+      gpa_to_letter(2.0f, &l, &p); CHECK(l=='C' && p==0,    "2.0 → C");
+      gpa_to_letter(1.0f, &l, &p); CHECK(l=='D' && p==0,    "1.0 → D (min pass)");
+    }
+
+    GROUP("honor_flex_target  (ambition within a tier's band)");
+    FCHECK(honor_tier_top(HONOR_GOOD),      3.19f, "Good band tops at 3.19");
+    FCHECK(honor_tier_top(HONOR_GOD),       4.00f, "God band tops at 4.00");
+    FCHECK(honor_flex_target(HONOR_GOOD, FLEX_LOW),  2.50f, "Good/low  = floor 2.50");
+    FCHECK(honor_flex_target(HONOR_GOOD, FLEX_HIGH), 3.19f, "Good/high = top 3.19");
+    FCHECK(honor_flex_target(HONOR_GOOD, FLEX_MED),  2.845f,"Good/med  = mid-band 2.845");
+    FCHECK(honor_flex_target(HONOR_GOD,  FLEX_HIGH), 4.00f, "God/high  = 4.00");
+
+    GROUP("honor_target_plan  (needed avg over remaining credits)");
+    {
+        /* 60 of 120 credits passed at rate 3.0 → 60 credits remaining */
+        HonorProjection hp = { .eff=60, .req=120, .remaining=60, .rate=3.0f,
+                               .ceiling=3.5f, .floor=1.5f,
+                               .projected=HONOR_GOOD, .best=HONOR_GOD, .worst=HONOR_NONE };
+        TargetPlan tn = honor_target_plan(&hp, HONOR_NORMAL);
+        CHECK(tn.status == TARGET_SECURED,    "normal → secured (need 1.0)");
+        TargetPlan tg = honor_target_plan(&hp, HONOR_GOOD);
+        CHECK(tg.status == TARGET_REACHABLE && fabsf(tg.needed_avg-2.0f)<0.001f,
+              "good → reachable, need avg 2.0 (C)");
+        TargetPlan te = honor_target_plan(&hp, HONOR_EXCELLENT);
+        CHECK(te.status == TARGET_REACHABLE && te.need_letter=='B' && te.need_plus==1,
+              "excellent → reachable at B+ (need 3.4)");
+        TargetPlan tx = honor_target_plan(&hp, HONOR_GOD);
+        CHECK(tx.status == TARGET_IMPOSSIBLE, "god → impossible (need 4.2 > 4.0)");
+
+        /* nothing left to earn — rate alone decides */
+        HonorProjection done = { .eff=120, .req=120, .remaining=0, .rate=3.3f };
+        CHECK(honor_target_plan(&done, HONOR_EXCELLENT).status == TARGET_SECURED,
+              "settled 3.3 → excellent secured");
+        CHECK(honor_target_plan(&done, HONOR_GOD).status == TARGET_IMPOSSIBLE,
+              "settled 3.3 → god impossible (no credits left)");
+    }
+
+    GROUP("honor_project  (end-to-end on a small player)");
+    {
+        setup_real_grad_rules();
+        node_pool_reset();
+        Player p; memset(&p, 0, sizeof(p));
+        /* co_so_nganh: 4×3cr; two passed with A, two not studied */
+        type_add(&p.numofSubjectType[co_so_nganh], make_node('A', 0, 3, 1, 1));
+        type_add(&p.numofSubjectType[co_so_nganh], make_node('A', 0, 3, 1, 1));
+        type_add(&p.numofSubjectType[co_so_nganh], make_node('X', 0, 3, 0, 0));
+        type_add(&p.numofSubjectType[co_so_nganh], make_node('X', 0, 3, 0, 0));
+        HonorProjection hp = honor_project(&p);
+        /* req = co_so_nganh Total_Credit(12) + tu_chon FIXED(9) = 21; eff = 6 */
+        CHECK(hp.eff == 6,         "effective credits = 6 (two passed A, 3cr each)");
+        CHECK(hp.req == 21,        "required credits = 12 + 9 (tu_chon) = 21");
+        CHECK(hp.remaining == 15,  "remaining = 21 - 6 = 15");
+        FCHECK(hp.rate, 4.0f,      "pass-only CPA = 4.0");
+        CHECK(hp.projected == HONOR_GOD,  "projected tier = god (rate 4.0)");
+        CHECK(hp.worst == HONOR_NONE,     "worst case (all-D on remaining) < 2.0");
+        CHECK(hp.best  == HONOR_GOD,      "best case (all-A) still god");
+    }
+}
+
 /* ══════════════════════════════════════════════════════════════════════
  * main
  * ══════════════════════════════════════════════════════════════════════ */
@@ -579,6 +656,7 @@ int main(void)
     test_calc_required_credits();
     test_update_player_status();
     test_db_validate();
+    test_honor();
 
     printf("\n==========================================================\n");
     printf("  Results:  %d passed,  %d failed\n", t_pass, t_fail);
