@@ -21,6 +21,10 @@
 #define ROW_H        44
 #define HDR_H        42
 
+/* Single responsive breakpoint: < BP_MOBILE → phone layout (drawer nav +
+ * priority columns). gIsMobile (main.c) is recomputed from gScreenW each frame. */
+#define BP_MOBILE   900
+
 /* ─── Spacing scale ──────────────────────────────────────────────────────
  * One scale, used deliberately: tight gaps bind a group, generous gaps
  * separate sections. Rhythm comes from choosing, not from a single value.
@@ -66,6 +70,15 @@
         .fontSize  = (uint16_t)((size) * gFontScale), \
         .fontId    = 0, \
         .wrapMode  = CLAY_TEXT_WRAP_NONE })
+
+/* Word-wrapping variant — for long text that must stay inside its container
+ * (e.g. a subject title in the edit popup header). */
+#define TCW(color, size) \
+    Clay__StoreTextElementConfig((Clay_TextElementConfig){ \
+        .textColor = (color), \
+        .fontSize  = (uint16_t)((size) * gFontScale), \
+        .fontId    = 0, \
+        .wrapMode  = CLAY_TEXT_WRAP_WORDS })
 
 /* ─── String helpers ─────────────────────────────────────────────────── */
 static Clay_String CS(const char *s)
@@ -118,8 +131,10 @@ static void RenderNavItem(int idx, const char *label, int warn)
         .cornerRadius    = CLAY_CORNER_RADIUS(5),
         .border          = { .color = bdr, .width = { .left = active ? 3 : 0 } },
     }) {
-        if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
+        if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
             gActiveNav = idx;
+            if (gIsMobile) gDrawerOpen = false;
+        }
 
         /* index badge */ /* nav label sized at 10 to fit long type names */
         CLAY(CLAY_IDI("NavBdg", idx), {
@@ -328,6 +343,89 @@ static void RenderSidebar(void)
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+ *  MOBILE TOP BAR + DRAWER  (shown below BP_MOBILE in place of the sidebar)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+static void RenderTopBar(void)
+{
+    CLAY(CLAY_ID("TopBar"), {
+        .layout = {
+            .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(52) },
+            .padding         = { 12, 14, 0, 0 },
+            .childGap        = 12,
+            .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+            .layoutDirection = CLAY_LEFT_TO_RIGHT,
+        },
+        .backgroundColor = C_SIDEBAR,
+        .border          = { .color = C_BORDER, .width = { .bottom = 1 } },
+    }) {
+        /* Hamburger — drawn from three bars so it needs no special glyph */
+        CLAY(CLAY_ID("BurgerBtn"), {
+            .layout = {
+                .sizing         = { CLAY_SIZING_FIXED(38), CLAY_SIZING_FIXED(36) },
+                .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+            },
+            .backgroundColor = Clay_Hovered() ? C_ROW_HOVER : C_CARD,
+            .cornerRadius    = CLAY_CORNER_RADIUS(6),
+            .border          = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+        }) {
+            if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
+                gDrawerOpen = !gDrawerOpen;
+            CLAY(CLAY_ID("BurgerBars"), {
+                .layout = {
+                    .sizing          = { CLAY_SIZING_FIXED(18), CLAY_SIZING_FIT(0) },
+                    .childGap        = 4,
+                    .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                },
+            }) {
+                for (int b = 0; b < 3; b++)
+                    CLAY(CLAY_IDI("BurgerBar", b), {
+                        .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(2) } },
+                        .backgroundColor = C_TEXT,
+                        .cornerRadius    = CLAY_CORNER_RADIUS(1),
+                    }) {}
+            }
+        }
+
+        /* Active section title */
+        const char *title = (gActiveNav == 0) ? "Dashboard" : gTypeName[gActiveNav];
+        CLAY_TEXT(CS(title), TC(C_TEXT, 16));
+    }
+}
+
+/* Sidebar-as-drawer: full-screen scrim (tap to dismiss) + the sidebar floating
+ * in from the left. Rendered as a top-level overlay when gDrawerOpen on mobile. */
+static void RenderDrawer(void)
+{
+    /* scrim */
+    CLAY(CLAY_ID("DrawerScrim"), {
+        .layout = { .sizing = { CLAY_SIZING_FIXED((float)gScreenW),
+                                CLAY_SIZING_FIXED((float)gScreenH) } },
+        .backgroundColor = (Clay_Color){ 27, 26, 23, 120 },
+        .floating = { .attachTo = CLAY_ATTACH_TO_ROOT, .zIndex = 30 },
+    }) {
+        if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
+            gDrawerOpen = false;
+    }
+
+    /* drawer panel pinned to the left edge */
+    CLAY(CLAY_ID("DrawerPanel"), {
+        .layout = {
+            .sizing          = { CLAY_SIZING_FIXED(SIDEBAR_W), CLAY_SIZING_FIXED((float)gScreenH) },
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+        },
+        .floating = {
+            .attachTo     = CLAY_ATTACH_TO_ROOT,
+            .attachPoints = { .element = CLAY_ATTACH_POINT_LEFT_TOP,
+                              .parent  = CLAY_ATTACH_POINT_LEFT_TOP },
+            .zIndex       = 31,
+        },
+    }) {
+        RenderSidebar();
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
  *  STAT LEDGER  (one panel, hairline-divided cells — not a card grid)
  * ═══════════════════════════════════════════════════════════════════════ */
 
@@ -373,15 +471,15 @@ static void RenderTableHeader(void)
             }, \
         }) { CLAY_TEXT(CLAY_STRING(lbl), TC(C_SUBTEXT, 10)); }
 
-        HDR_CELL("HC0", CLAY_SIZING_FIXED(48),  "#",            CLAY_ALIGN_X_LEFT)
+        if (!gIsMobile) HDR_CELL("HC0", CLAY_SIZING_FIXED(48),  "#",            CLAY_ALIGN_X_LEFT)
         HDR_CELL("HC1", CLAY_SIZING_GROW(0),    "SUBJECT NAME", CLAY_ALIGN_X_LEFT)
-        HDR_CELL("HC2", CLAY_SIZING_FIXED(84),  "CODE",         CLAY_ALIGN_X_LEFT)
+        if (!gIsMobile) HDR_CELL("HC2", CLAY_SIZING_FIXED(84),  "CODE",         CLAY_ALIGN_X_LEFT)
         HDR_CELL("HC3", CLAY_SIZING_FIXED(56),  "GR",           CLAY_ALIGN_X_RIGHT)
         HDR_CELL("HC4", CLAY_SIZING_FIXED(70),  "MID",          CLAY_ALIGN_X_RIGHT)
         HDR_CELL("HC5", CLAY_SIZING_FIXED(70),  "FIN",          CLAY_ALIGN_X_RIGHT)
         HDR_CELL("HC6", CLAY_SIZING_FIXED(64),  "PASS",         CLAY_ALIGN_X_CENTER)
-        HDR_CELL("HC7", CLAY_SIZING_FIXED(56),  "CR",           CLAY_ALIGN_X_RIGHT)
-        HDR_CELL("HC8", CLAY_SIZING_FIXED(56),  "SEM",          CLAY_ALIGN_X_RIGHT)
+        if (!gIsMobile) HDR_CELL("HC7", CLAY_SIZING_FIXED(56),  "CR",           CLAY_ALIGN_X_RIGHT)
+        if (!gIsMobile) HDR_CELL("HC8", CLAY_SIZING_FIXED(56),  "SEM",          CLAY_ALIGN_X_RIGHT)
 #undef HDR_CELL
     }
 }
@@ -400,9 +498,8 @@ static Clay_Color score_color(const char *letter)
 static void RenderTableRow(Subject_Node *node, int idx)
 {
     bool isOdd = idx % 2 != 0;
-
-    /* Open edit popup on row click */
-    bool rowHovered = Clay_Hovered();
+    /* studied-but-not-passed (includes auto-F) → red left accent bar */
+    bool failed = (node->score_letter != 'X') && (node->status_pass == 0);
 
     CLAY(CLAY_IDI("Row", idx), {
         .layout = {
@@ -413,8 +510,53 @@ static void RenderTableRow(Subject_Node *node, int idx)
                          : (isOdd ? C_ROW_ODD : C_ROW_EVEN),
         .border = { .color = C_BORDER, .width = { .bottom = 1 } },
     }) {
-        (void)rowHovered;
-        if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON) && !gEditOpen) {
+        bool hov = Clay_Hovered();
+        if (hov) gRowHover = true;  /* main.c switches to pointing-hand cursor */
+
+        /* failed-row left accent bar — floating so it adds no layout shift and
+         * keeps its own color independent of the row's hairline border */
+        if (failed) {
+            CLAY(CLAY_IDI("RowBar", idx), {
+                .layout = { .sizing = { CLAY_SIZING_FIXED(3),
+                                        CLAY_SIZING_FIXED(ROW_H) } },
+                .backgroundColor = C_RED,
+                .floating = {
+                    .attachTo     = CLAY_ATTACH_TO_PARENT,
+                    .attachPoints = { .element = CLAY_ATTACH_POINT_LEFT_TOP,
+                                      .parent  = CLAY_ATTACH_POINT_LEFT_TOP },
+                    .pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH,
+                    .clipTo       = CLAY_CLIP_TO_ATTACHED_PARENT,
+                    .zIndex       = 2,
+                },
+            }) {}
+        }
+
+        /* "Edit ›" affordance revealed on hover (floating → no layout shift) */
+        if (hov) {
+            CLAY(CLAY_IDI("RowEdit", idx), {
+                .layout = {
+                    .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(20) },
+                    .padding        = { 8, 8, 0, 0 },
+                    .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                },
+                .backgroundColor = C_ACCENT_BG,
+                .cornerRadius    = CLAY_CORNER_RADIUS(10),
+                .floating = {
+                    .offset       = { -10.f, 0.f },
+                    .attachTo     = CLAY_ATTACH_TO_PARENT,
+                    .attachPoints = { .element = CLAY_ATTACH_POINT_RIGHT_CENTER,
+                                      .parent  = CLAY_ATTACH_POINT_RIGHT_CENTER },
+                    .pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH,
+                    .clipTo       = CLAY_CLIP_TO_ATTACHED_PARENT,
+                    .zIndex       = 3,
+                },
+            }) {
+                CLAY_TEXT(CLAY_STRING("Edit >"), TC(C_ACCENT, 10));
+            }
+        }
+
+        if (hov && IsMouseButtonReleased(MOUSE_LEFT_BUTTON) && !gEditOpen) {
+            gEditError[0] = '\0';
             gEditOpen  = true;
             gEditField = 0;
             gEditRatio = 3;
@@ -430,7 +572,8 @@ static void RenderTableRow(Subject_Node *node, int idx)
                 gEditFinLen = snprintf(gEditFinBuf, sizeof(gEditFinBuf), "%.2f", node->score_number_final);
             else { gEditFinBuf[0] = '\0'; gEditFinLen = 0; }
         }
-        /* ── # ── */
+        /* ── # ── (hidden on mobile) */
+        if (!gIsMobile)
         CLAY(CLAY_IDI("RC", idx * 10 + 0), {
             .layout = {
                 .sizing         = { CLAY_SIZING_FIXED(48), CLAY_SIZING_GROW(0) },
@@ -448,7 +591,8 @@ static void RenderTableRow(Subject_Node *node, int idx)
             },
         }) { CLAY_TEXT(CS(node->name), TC(C_TEXT, 11)); }
 
-        /* ── Code ── */
+        /* ── Code ── (hidden on mobile) */
+        if (!gIsMobile)
         CLAY(CLAY_IDI("RC", idx * 10 + 2), {
             .layout = {
                 .sizing         = { CLAY_SIZING_FIXED(84), CLAY_SIZING_GROW(0) },
@@ -535,7 +679,8 @@ static void RenderTableRow(Subject_Node *node, int idx)
             }
         }
 
-        /* ── Credits (right-aligned) ── */
+        /* ── Credits (right-aligned) ── (hidden on mobile) */
+        if (!gIsMobile)
         CLAY(CLAY_IDI("RC", idx * 10 + 7), {
             .layout = {
                 .sizing         = { CLAY_SIZING_FIXED(56), CLAY_SIZING_GROW(0) },
@@ -544,7 +689,8 @@ static void RenderTableRow(Subject_Node *node, int idx)
             },
         }) { CLAY_TEXT(DS("%u", node->credit), TC(C_TEXT, 11)); }
 
-        /* ── Term / semester (right-aligned) ── */
+        /* ── Term / semester (right-aligned) ── (hidden on mobile) */
+        if (!gIsMobile)
         CLAY(CLAY_IDI("RC", idx * 10 + 8), {
             .layout = {
                 .sizing         = { CLAY_SIZING_FIXED(56), CLAY_SIZING_GROW(0) },
@@ -1353,9 +1499,113 @@ static void plan_ratio_weights(int ratio, float *rm, float *rf)
     }
 }
 
+static const char *kRatioLabels[4] = { "", "50 / 50", "40 / 60", "30 / 70" };
+
+/* ── Shared edit-popup helpers (also called from main.c HandleKeyboard) ──── */
+
+/* Append one keystroke to the active score field, mirroring the keyboard rules:
+ * digits and a single '.', max 6 chars. ch == 8 (backspace) deletes one char. */
+static void EditKeyInput(int ch)
+{
+    char *buf = (gEditField == 0) ? gEditMidBuf : gEditFinBuf;
+    int  *len = (gEditField == 0) ? &gEditMidLen : &gEditFinLen;
+    gEditError[0] = '\0';
+    if (ch == 8) {                       /* backspace */
+        if (*len > 0) buf[--(*len)] = '\0';
+        return;
+    }
+    bool isDot   = (ch == '.');
+    bool isDigit = (ch >= '0' && ch <= '9');
+    if ((isDigit || isDot) && *len < 6) {
+        if (isDot && strchr(buf, '.')) return;   /* only one dot */
+        buf[(*len)++] = (char)ch;
+        buf[*len]     = '\0';
+    }
+}
+
+/* Validate + persist the current edit. Returns true on success; on failure
+ * leaves the popup open and writes a message into gEditError. */
+static bool EditTrySave(void)
+{
+    float mid = (float)atof(gEditMidBuf);
+    float fin = (float)atof(gEditFinBuf);
+    if (gEditMidLen == 0 || gEditFinLen == 0) {
+        snprintf(gEditError, sizeof(gEditError), "Enter both midterm and final.");
+        return false;
+    }
+    if (mid < 0.f || mid > 10.f || fin < 0.f || fin > 10.f) {
+        snprintf(gEditError, sizeof(gEditError), "Scores must be between 0 and 10.");
+        return false;
+    }
+    if (!DB_SubjectExists(gEditCode)) {
+        snprintf(gEditError, sizeof(gEditError), "Subject %s not found.", gEditCode);
+        return false;
+    }
+    DB_UpdateScoreRatio(gEditCode, mid, fin, gEditRatio);
+    RefreshPlayer();
+    snprintf(gResultMsg, sizeof(gResultMsg),
+             "Saved %s: mid=%.2f  final=%.2f  ratio=%s",
+             gEditCode, mid, fin, kRatioLabels[gEditRatio]);
+    gHasResult       = true;
+    gResultShowUntil = (float)GetTime() + 5.f;
+    gEditError[0]    = '\0';
+    gEditOpen        = false;
+    return true;
+}
+
+/* On-canvas number pad — taps feed EditKeyInput() into the active field.
+ * Always rendered (works with a mouse on desktop, touch on mobile web). */
+static void RenderKeypad(float w)
+{
+    static const char *const keys[12] = {
+        "7","8","9", "4","5","6", "1","2","3", "0",".","DEL"
+    };
+    static const int codes[12] = {
+        '7','8','9', '4','5','6', '1','2','3', '0','.', 8 /* backspace */
+    };
+    float keyW = (w - 12.f) / 3.f;   /* 3 keys per row, 6px gap ×2 */
+    CLAY(CLAY_ID("EditKeypad"), {
+        .layout = {
+            .sizing          = { CLAY_SIZING_FIXED(w), CLAY_SIZING_FIT(0) },
+            .childGap        = 6,
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+        },
+    }) {
+        for (int row = 0; row < 4; row++) {
+            CLAY(CLAY_IDI("KpRow", row), {
+                .layout = {
+                    .sizing          = { CLAY_SIZING_FIXED(w), CLAY_SIZING_FIXED(38) },
+                    .childGap        = 6,
+                    .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                },
+            }) {
+                for (int col = 0; col < 3; col++) {
+                    int k = row * 3 + col;
+                    CLAY(CLAY_IDI("KpKey", k), {
+                        .layout = {
+                            .sizing         = { CLAY_SIZING_FIXED(keyW), CLAY_SIZING_GROW(0) },
+                            .childAlignment = { .x = CLAY_ALIGN_X_CENTER,
+                                                .y = CLAY_ALIGN_Y_CENTER },
+                        },
+                        .backgroundColor = Clay_Hovered() ? C_ROW_HOVER : C_TBL_HDR,
+                        .cornerRadius    = CLAY_CORNER_RADIUS(6),
+                        .border          = { .color = C_BORDER,
+                                             .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+                    }) {
+                        if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
+                            EditKeyInput(codes[k]);
+                        CLAY_TEXT(CS(keys[k]),
+                                  TC(codes[k] == 8 ? C_ACCENT : C_TEXT, 14));
+                    }
+                }
+            }
+        }
+    }
+}
+
 static void RenderEditPopup(void)
 {
-    static const char *ratio_labels[4] = { "", "50 / 50", "40 / 60", "30 / 70" };
+    const char *const *ratio_labels = kRatioLabels;
 
     /* full-screen backdrop */
     CLAY(CLAY_ID("EditBackdrop"), {
@@ -1370,10 +1620,12 @@ static void RenderEditPopup(void)
         },
     }) {}
 
-    /* popup card */
+    /* popup card — fluid width so it fits narrow / phone screens */
+    float editCardW = fminf(520.f, (float)gScreenW - 32.f);
+    float innerW    = editCardW - 36.f;   /* body content width (18px padding ×2) */
     CLAY(CLAY_ID("EditCard"), {
         .layout = {
-            .sizing          = { CLAY_SIZING_FIXED(520), CLAY_SIZING_FIT(0) },
+            .sizing          = { CLAY_SIZING_FIXED(editCardW), CLAY_SIZING_FIT(0) },
             .layoutDirection = CLAY_TOP_TO_BOTTOM,
             .childGap        = 0,
         },
@@ -1389,36 +1641,103 @@ static void RenderEditPopup(void)
         },
     }) {
 
-        /* ── Header ── */
+        /* ── Header: title + code (left, wraps) + live grade chip (right) ── */
         CLAY(CLAY_ID("EditHdr"), {
             .layout = {
-                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(54) },
-                .padding         = { 18, 18, 0, 0 },
-                .childGap        = 6,
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .padding         = { 18, 14, 14, 14 },
+                .childGap        = 12,
                 .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
-                .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                .layoutDirection = CLAY_LEFT_TO_RIGHT,
             },
             .backgroundColor = C_TBL_HDR,
             .border          = { .color = C_BORDER, .width = { .bottom = 1 } },
         }) {
-            CLAY_TEXT(CS(gEditSubjectName), TC(C_TEXT, 13));
-            CLAY_TEXT(DS("Code: %s", gEditCode),  TC(C_ACCENT, 10));
+            CLAY(CLAY_ID("EditHdrText"), {
+                .layout = {
+                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                    .childGap        = 3,
+                    .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                },
+            }) {
+                /* wraps within the remaining width → never collides with chip */
+                CLAY_TEXT(CS(gEditSubjectName), TCW(C_TEXT, 13));
+                CLAY_TEXT(DS("Code: %s", gEditCode),  TC(C_ACCENT, 10));
+            }
+
+            /* Live result: grade letter + average + PASS/FAIL as you type */
+            float midv = (gEditMidLen > 0) ? (float)atof(gEditMidBuf) : -1.f;
+            float finv = (gEditFinLen > 0) ? (float)atof(gEditFinBuf) : -1.f;
+            bool  ok   = midv >= 0.f && midv <= 10.f && finv >= 0.f && finv <= 10.f;
+            float rmh, rfh;
+            plan_ratio_weights(gEditRatio, &rmh, &rfh);
+            const char *L = ok ? db_compute_letter_r(midv, finv, rmh, rfh) : "-";
+            bool  pass = ok && (L[0] != 'F');
+            float avg  = ok ? (rmh * midv + rfh * finv) : 0.f;
+            Clay_Color accent = !ok ? C_SUBTEXT : (pass ? C_GREEN : C_RED);
+
+            /* Chip: big grade letter | hairline | AVERAGE value + PASS/FAIL */
+            CLAY(CLAY_ID("EditHdrChip"), {
+                .layout = {
+                    .sizing          = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIT(0) },
+                    .padding         = { 14, 14, 10, 10 },
+                    .childGap        = 12,
+                    .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                    .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                },
+                .backgroundColor = !ok ? C_BG : (pass ? C_GREEN_BG : C_RED_BG),
+                .cornerRadius    = CLAY_CORNER_RADIUS(8),
+                .border          = { .color = accent,
+                                     .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+            }) {
+                /* grade letter, dominant */
+                CLAY(CLAY_ID("EditHdrGrade"), {
+                    .layout = {
+                        .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIT(0) },
+                        .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+                    },
+                }) {
+                    CLAY_TEXT(DS("%s", L), TC(ok ? score_color(L) : C_SUBTEXT, 28));
+                }
+                /* hairline divider */
+                CLAY(CLAY_ID("EditHdrDiv"), {
+                    .layout          = { .sizing = { CLAY_SIZING_FIXED(1), CLAY_SIZING_FIXED(34) } },
+                    .backgroundColor = accent,
+                }) {}
+                /* average + pass/fail, stacked */
+                CLAY(CLAY_ID("EditHdrMeta"), {
+                    .layout = {
+                        .sizing          = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIT(0) },
+                        .childGap        = 2,
+                        .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                    },
+                }) {
+                    CLAY_TEXT(CLAY_STRING("AVERAGE"), TC(C_SUBTEXT, 8));
+                    CLAY_TEXT(ok ? DS("%.2f", avg) : CLAY_STRING("--"),
+                              TC(C_TEXT, 15));
+                    CLAY_TEXT(ok ? (pass ? CLAY_STRING("PASS") : CLAY_STRING("FAIL"))
+                                 : CLAY_STRING("enter scores"),
+                              TC(accent, 10));
+                }
+            }
         }
 
         /* ── Body ── */
         CLAY(CLAY_ID("EditBody"), {
             .layout = {
-                .sizing          = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIT(0) },
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
                 .padding         = { 18, 18, 14, 14 },
                 .childGap        = 12,
                 .layoutDirection = CLAY_TOP_TO_BOTTOM,
             },
         }) {
 
-            /* Score input row */
+            /* Score input row — deterministic FIXED column widths (split-GROW /
+             * PERCENT children collapse in this Clay build, so avoid them) */
+            float scoreColW = (innerW - 12.f) / 2.f;
             CLAY(CLAY_ID("EditScoreRow"), {
                 .layout = {
-                    .sizing          = { CLAY_SIZING_FIXED(480), CLAY_SIZING_FIT(0) },
+                    .sizing          = { CLAY_SIZING_FIXED(innerW), CLAY_SIZING_FIT(0) },
                     .childGap        = 12,
                     .layoutDirection = CLAY_LEFT_TO_RIGHT,
                 },
@@ -1426,15 +1745,15 @@ static void RenderEditPopup(void)
                 /* Midterm field */
                 CLAY(CLAY_ID("EditMidCol"), {
                     .layout = {
-                        .sizing          = { CLAY_SIZING_PERCENT(0.5f), CLAY_SIZING_FIT(0) },
+                        .sizing          = { CLAY_SIZING_FIXED(scoreColW), CLAY_SIZING_FIT(0) },
                         .childGap        = 6,
                         .layoutDirection = CLAY_TOP_TO_BOTTOM,
                     },
                 }) {
-                    CLAY_TEXT(CLAY_STRING("Midterm  (0 — 10)"), TC(C_SUBTEXT, 10));
+                    CLAY_TEXT(CLAY_STRING("Midterm  (0 - 10)"), TC(C_SUBTEXT, 10));
                     CLAY(CLAY_ID("EditMidBox"), {
                         .layout = {
-                            .sizing          = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(38) },
+                            .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(38) },
                             .padding         = { 10, 10, 0, 0 },
                             .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
                             .layoutDirection = CLAY_LEFT_TO_RIGHT,
@@ -1463,15 +1782,15 @@ static void RenderEditPopup(void)
                 /* Final field */
                 CLAY(CLAY_ID("EditFinCol"), {
                     .layout = {
-                        .sizing          = { CLAY_SIZING_PERCENT(0.5f), CLAY_SIZING_FIT(0) },
+                        .sizing          = { CLAY_SIZING_FIXED(scoreColW), CLAY_SIZING_FIT(0) },
                         .childGap        = 6,
                         .layoutDirection = CLAY_TOP_TO_BOTTOM,
                     },
                 }) {
-                    CLAY_TEXT(CLAY_STRING("Final  (0 — 10)"), TC(C_SUBTEXT, 10));
+                    CLAY_TEXT(CLAY_STRING("Final  (0 - 10)"), TC(C_SUBTEXT, 10));
                     CLAY(CLAY_ID("EditFinBox"), {
                         .layout = {
-                            .sizing          = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(38) },
+                            .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(38) },
                             .padding         = { 10, 10, 0, 0 },
                             .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
                             .layoutDirection = CLAY_LEFT_TO_RIGHT,
@@ -1499,7 +1818,14 @@ static void RenderEditPopup(void)
             }
 
             /* Tab hint */
-            CLAY_TEXT(CLAY_STRING("Tab  switch field"), TC(C_SUBTEXT, 9));
+            CLAY_TEXT(CLAY_STRING("Tab  switch field   \xC2\xB7   Enter  save"), TC(C_SUBTEXT, 9));
+
+            /* Inline validation message (set by EditTrySave) */
+            if (gEditError[0])
+                CLAY_TEXT(DS("%s", gEditError), TC(C_RED, 11));
+
+            /* On-canvas number pad */
+            RenderKeypad(innerW);
 
             /* Ratio selector */
             CLAY(CLAY_ID("EditRatioRow"), {
@@ -1535,7 +1861,7 @@ static void RenderEditPopup(void)
             /* ── "What you need on the final" planner ──────────────────── */
             CLAY(CLAY_ID("EditPlan"), {
                 .layout = {
-                    .sizing          = { CLAY_SIZING_FIXED(480), CLAY_SIZING_FIT(0) },
+                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
                     .padding         = { 14, 14, 12, 12 },
                     .childGap        = 7,
                     .layoutDirection = CLAY_TOP_TO_BOTTOM,
@@ -1556,7 +1882,7 @@ static void RenderEditPopup(void)
                               TC(C_SUBTEXT, 10));
                 } else if (midv < MIN_PASS_SCORE) {
                     /* mid below the per-component floor → unpassable */
-                    CLAY_TEXT(DS("Midterm %.1f is below %.0f \xE2\x80\x94 automatic F.",
+                    CLAY_TEXT(DS("Midterm %.1f is below %.0f - automatic F.",
                                  midv, MIN_PASS_SCORE),
                               TC(C_RED, 11));
                     CLAY_TEXT(CLAY_STRING("No final score can pass this subject."),
@@ -1614,7 +1940,7 @@ static void RenderEditPopup(void)
             .border          = { .color = C_BORDER, .width = { .top = 1 } },
         }) {
 
-            /* Save */
+            /* Save — primary (filled green) */
             CLAY(CLAY_ID("EditSave"), {
                 .layout = {
                     .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(34) },
@@ -1626,32 +1952,24 @@ static void RenderEditPopup(void)
                 .border          = { .color = C_GREEN,
                                      .width = { .left=1,.right=1,.top=1,.bottom=1 } },
             }) {
-                if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
-                    float mid = (float)atof(gEditMidBuf);
-                    float fin = (float)atof(gEditFinBuf);
-                    if (mid >= 0.f && mid <= 10.f && fin >= 0.f && fin <= 10.f
-                            && DB_SubjectExists(gEditCode)) {
-                        DB_UpdateScoreRatio(gEditCode, mid, fin, gEditRatio);
-                        RefreshPlayer();
-                        snprintf(gResultMsg, sizeof(gResultMsg),
-                                 "Saved %s: mid=%.2f  final=%.2f  ratio=%s",
-                                 gEditCode, mid, fin, ratio_labels[gEditRatio]);
-                        gHasResult       = true;
-                        gResultShowUntil = (float)GetTime() + 5.f;
-                        gEditOpen = false;
-                    }
-                }
+                if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
+                    EditTrySave();
                 CLAY_TEXT(CLAY_STRING("Save"), TC(C_WHITE, 11));
             }
 
-            /* Reset */
+            /* spacer pushes the secondary/destructive actions to the right */
+            CLAY(CLAY_ID("EditBtnSp"), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(1) } },
+            }) {}
+
+            /* Reset — destructive, de-emphasized (ghost outline) */
             CLAY(CLAY_ID("EditReset"), {
                 .layout = {
                     .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(34) },
-                    .padding        = { 18, 18, 6, 6 },
+                    .padding        = { 16, 16, 6, 6 },
                     .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
                 },
-                .backgroundColor = Clay_Hovered() ? (Clay_Color){150,42,34,255} : C_RED,
+                .backgroundColor = Clay_Hovered() ? C_RED_BG : C_TRANS,
                 .cornerRadius    = CLAY_CORNER_RADIUS(4),
                 .border          = { .color = C_RED,
                                      .width = { .left=1,.right=1,.top=1,.bottom=1 } },
@@ -1663,17 +1981,13 @@ static void RenderEditPopup(void)
                              "Reset score for %s", gEditCode);
                     gHasResult       = true;
                     gResultShowUntil = (float)GetTime() + 5.f;
+                    gEditError[0]    = '\0';
                     gEditOpen = false;
                 }
-                CLAY_TEXT(CLAY_STRING("Reset"), TC(C_WHITE, 11));
+                CLAY_TEXT(CLAY_STRING("Reset"), TC(C_RED, 11));
             }
 
-            /* spacer */
-            CLAY(CLAY_ID("EditBtnSp"), {
-                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(1) } },
-            }) {}
-
-            /* Cancel */
+            /* Cancel — neutral */
             CLAY(CLAY_ID("EditCancel"), {
                 .layout = {
                     .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(34) },
@@ -1683,8 +1997,10 @@ static void RenderEditPopup(void)
                 .backgroundColor = Clay_Hovered() ? C_ROW_HOVER : C_BORDER,
                 .cornerRadius    = CLAY_CORNER_RADIUS(6),
             }) {
-                if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
+                if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                    gEditError[0] = '\0';
                     gEditOpen = false;
+                }
                 CLAY_TEXT(CLAY_STRING("Cancel"), TC(C_TEXT, 11));
             }
         }

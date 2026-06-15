@@ -50,6 +50,12 @@ static int  gActiveNav  = 1;
 static int  gScreenW    = WIN_W;
 static int  gScreenH    = WIN_H;
 
+/* responsive state — recomputed each frame from gScreenW (see UpdateDrawFrame) */
+static bool gIsMobile   = false;  /* gScreenW < BP_MOBILE                         */
+static bool gDrawerOpen = false;  /* mobile sidebar drawer visibility            */
+static bool gRowHover   = false;  /* a table row is hovered this frame → pointer */
+static bool gIsTouch    = false;  /* touch device (web only) → HTML keyboard bridge */
+
 /* per-frame dynamic string arena */
 #define DYN_BUF_SIZE 32768
 static char gDynBuf[DYN_BUF_SIZE];
@@ -70,6 +76,7 @@ static int   gEditFinLen      = 0;
 static int   gEditField       = 0;    /* 0 = mid, 1 = final            */
 static int   gEditRatio       = 3;    /* 1=50/50  2=40/60  3=30/70     */
 static char  gEditSubjectName[MAXSIZENAME] = {0};
+static char  gEditError[64]   = {0};  /* inline popup validation msg ("" = none) */
 static bool  gHasResult       = false;
 static float gResultShowUntil = -1.f; /* GetTime() expiry for toast  */
 
@@ -165,33 +172,26 @@ static void HandleKeyboard(void)
     /* Edit popup takes input priority after F1 */
     if (gEditOpen) {
         if (IsKeyPressed(KEY_ESCAPE)) {
+            gEditError[0] = '\0';
             gEditOpen = false;
             return;
         }
-        /* Tab / Shift+Tab cycle between fields */
+        /* Enter saves (validation + persist handled by EditTrySave) */
+        if (IsKeyPressed(KEY_ENTER)) {
+            EditTrySave();
+            return;
+        }
+        /* Tab cycles between fields */
         if (IsKeyPressed(KEY_TAB)) {
             gEditField = (gEditField + 1) % 2;
             return;
         }
-        /* Backspace */
-        char *activeBuf = gEditField == 0 ? gEditMidBuf : gEditFinBuf;
-        int  *activeLen = gEditField == 0 ? &gEditMidLen : &gEditFinLen;
-        if ((IsKeyPressed(KEY_BACKSPACE) || IsKeyPressedRepeat(KEY_BACKSPACE))
-                && *activeLen > 0) {
-            activeBuf[--(*activeLen)] = '\0';
-        }
-        /* Printable: digits and single '.' */
+        /* Digit / dot / backspace routed through the shared keypad helper */
+        if (IsKeyPressed(KEY_BACKSPACE) || IsKeyPressedRepeat(KEY_BACKSPACE))
+            EditKeyInput(8);
         int ch;
-        while ((ch = GetCharPressed()) != 0) {
-            bool isDot   = (ch == '.');
-            bool isDigit = (ch >= '0' && ch <= '9');
-            if ((isDigit || isDot) && *activeLen < 6) {
-                /* only one dot allowed */
-                if (isDot && strchr(activeBuf, '.')) continue;
-                activeBuf[(*activeLen)++] = (char)ch;
-                activeBuf[*activeLen]     = '\0';
-            }
-        }
+        while ((ch = GetCharPressed()) != 0)
+            EditKeyInput(ch);
         return;
     }
 
@@ -246,12 +246,14 @@ static void BuildLayout(void)
     CLAY(CLAY_ID("Root"), {
         .layout = {
             .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
-            .layoutDirection = CLAY_LEFT_TO_RIGHT,
+            /* mobile: top bar above content; desktop: sidebar beside content */
+            .layoutDirection = gIsMobile ? CLAY_TOP_TO_BOTTOM : CLAY_LEFT_TO_RIGHT,
         },
         .backgroundColor = C_BG,
     }) {
         if (!gNameInput) {
-            RenderSidebar();
+            if (gIsMobile) RenderTopBar();
+            else           RenderSidebar();
             if (gActiveNav == 0)
                 RenderDashboard();
             else
@@ -263,6 +265,7 @@ static void BuildLayout(void)
         RenderNameInput();
     } else {
         /* Floating overlays rendered on top via zIndex */
+        if (gIsMobile && gDrawerOpen) RenderDrawer();
         if (gEditOpen)   RenderEditPopup();
         if (gPopupOpen)  RenderCommandPopup();
         if (gHasResult)  RenderResultToast();
@@ -386,6 +389,12 @@ int main(void)
      * user can open one. No-op on desktop. */
     DB_PersistInit();
 
+#if defined(PLATFORM_WEB)
+    /* Detect touch devices (set by the shell script) → enable the soft-keyboard
+     * bridge for text fields. Desktop web keeps the GLFW keyboard path. */
+    gIsTouch = EM_ASM_INT({ return window.TV_isTouch ? 1 : 0; });
+#endif
+
     /* Main loop — the per-frame body lives in UpdateDrawFrame() so the
      * WebAssembly build can let the browser drive it one frame at a time. */
 #if defined(PLATFORM_WEB)
@@ -402,12 +411,86 @@ int main(void)
     return 0;
 }
 
+#if defined(PLATFORM_WEB)
+/* ── Soft-keyboard bridge (touch web only) ────────────────────────────────
+ * The hidden HTML <input> in shell.html owns the text while focused; we seed
+ * it on open and copy its value back into the C buffer each frame. ASCII is
+ * copied directly into HEAPU8 so we depend on no exported runtime helpers. */
+enum { KBD_NONE = 0, KBD_NAME = 1, KBD_CMD = 2 };
+static int gKbdTarget = KBD_NONE;
+
+static void tv_kbd_open(const char *text)
+{
+    EM_ASM({ if (window.TV_kbdOpen) TV_kbdOpen(UTF8ToString($0), "text"); }, text);
+}
+static void tv_kbd_close(void)
+{
+    EM_ASM({ if (window.TV_kbdClose) TV_kbdClose(); });
+}
+/* Copy window.__tvKbdValue (ASCII) into buf[cap]; returns strlen written. */
+static int tv_kbd_pull(char *buf, int cap)
+{
+    return EM_ASM_INT({
+        var s = window.__tvKbdValue || "";
+        var n = 0;
+        for (var k = 0; k < s.length && n < $1 - 1; k++) {
+            var c = s.charCodeAt(k);
+            if (c >= 32 && c < 127) { HEAPU8[$0 + n] = c; n++; }
+        }
+        HEAPU8[$0 + n] = 0;
+        return n;
+    }, buf, cap);
+}
+static int tv_kbd_take_enter(void)
+{
+    return EM_ASM_INT({ var e = window.__tvKbdEnter; window.__tvKbdEnter = 0; return e; });
+}
+
+/* Reconcile the soft keyboard with the current focused text field. */
+static void WebKbdSync(void)
+{
+    if (!gIsTouch) return;
+
+    int desired = gNameInput ? KBD_NAME : (gPopupOpen ? KBD_CMD : KBD_NONE);
+
+    if (desired != gKbdTarget) {
+        if (desired == KBD_NONE)      tv_kbd_close();
+        else if (desired == KBD_NAME) tv_kbd_open(gUserName);
+        else                          tv_kbd_open(gCmdBuf);
+        gKbdTarget = desired;
+    }
+    if (gKbdTarget == KBD_NONE) return;
+
+    if (gKbdTarget == KBD_NAME) {
+        gNameLen = tv_kbd_pull(gUserName, 26);
+        if (gNameLen > 25) gNameLen = 25;
+        if (tv_kbd_take_enter() && gNameLen > 0) InitPlayerDB();
+    } else { /* KBD_CMD */
+        gCmdLen = tv_kbd_pull(gCmdBuf, 256);
+        if (tv_kbd_take_enter() && gCmdLen > 0) {
+            ExecuteCommand(gCmdBuf, &gActiveNav, gFilterDept,
+                           gResultMsg, sizeof(gResultMsg));
+            gHasResult       = true;
+            gResultShowUntil = (float)GetTime() + 5.f;
+            gPopupOpen       = false;
+            gCmdLen          = 0;
+            gCmdBuf[0]       = '\0';
+        }
+    }
+}
+#endif
+
 /* ── Per-frame update + render ─────────────────────────────────────────── */
 static void UpdateDrawFrame(void)
 {
     {
+        (void)gIsTouch;  /* used only by the web soft-keyboard bridge */
         gScreenW = GetScreenWidth();
         gScreenH = GetScreenHeight();
+
+        bool wasMobile = gIsMobile;
+        gIsMobile = gScreenW < BP_MOBILE;
+        if (!gIsMobile && wasMobile) gDrawerOpen = false;  /* leaving mobile closes drawer */
 
         Clay_SetLayoutDimensions((Clay_Dimensions){ (float)gScreenW, (float)gScreenH });
         Clay_SetPointerState(
@@ -419,6 +502,11 @@ static void UpdateDrawFrame(void)
             GetFrameTime());
 
         HandleKeyboard();
+
+#if defined(PLATFORM_WEB)
+        /* Mirror the focused text field into the mobile soft keyboard. */
+        WebKbdSync();
+#endif
 
 #if defined(PLATFORM_WEB)
         /* Finish an async .db import once the browser has written the file. */
@@ -443,9 +531,13 @@ static void UpdateDrawFrame(void)
 
         gDynPos = 0;  /* reset per-frame string arena */
 
+        gRowHover = false;  /* set true by RenderTableRow when a row is hovered */
         Clay_BeginLayout();
         BuildLayout();
         Clay_RenderCommandArray cmds = Clay_EndLayout();
+
+        /* clickable rows get the pointing-hand cursor */
+        SetMouseCursor(gRowHover ? MOUSE_CURSOR_POINTING_HAND : MOUSE_CURSOR_DEFAULT);
 
         BeginDrawing();
         ClearBackground((Color){ 241, 237, 229, 255 });

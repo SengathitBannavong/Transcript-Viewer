@@ -30,7 +30,51 @@
   <canvas class="app" id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
   <div id="status">Loading Transcript Viewer…</div>
 
+  <!-- Off-screen real input: focusing it summons the mobile soft keyboard.
+       The C side seeds its value on open and polls window.__tvKbdValue. -->
+  <input id="tvkbd" autocomplete="off" autocorrect="off" autocapitalize="off"
+         spellcheck="false"
+         style="position:absolute; left:-2000px; top:0; width:1px; height:1px; opacity:0; border:0; padding:0;">
+
   <script>
+    /* Soft-keyboard bridge — touch devices only (see main.c WebKbdSync).
+       The keyboard can only be summoned from inside a user-gesture handler, so
+       the actual focus() happens in the canvas tap listener below; the C frame
+       loop just raises window.__tvKbdWant and seeds the value. */
+    window.__tvKbdValue = '';
+    window.__tvKbdEnter = 0;
+    window.__tvKbdWant  = 0;
+    window.TV_isTouch = (window.matchMedia &&
+        window.matchMedia('(pointer:coarse)').matches) ||
+        ('ontouchstart' in window) ? 1 : 0;
+    (function () {
+      var i = document.getElementById('tvkbd');
+      i.addEventListener('input', function () { window.__tvKbdValue = i.value; });
+      i.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { window.__tvKbdEnter = 1; e.preventDefault(); }
+      });
+      /* Tapping the canvas while a text field is active focuses the hidden
+         input within the gesture, which is what actually opens the keyboard. */
+      var focusIfWanted = function () {
+        if (window.__tvKbdWant) document.getElementById('tvkbd').focus();
+      };
+      var c = document.getElementById('canvas');
+      c.addEventListener('touchend', focusIfWanted);
+      c.addEventListener('mousedown', focusIfWanted);
+    })();
+    window.TV_kbdOpen = function (text, mode) {
+      var i = document.getElementById('tvkbd');
+      i.value = text || ''; window.__tvKbdValue = i.value; window.__tvKbdEnter = 0;
+      i.inputMode = mode || 'text';
+      window.__tvKbdWant = 1;
+      i.focus();                /* works on desktop web; mobile waits for a tap */
+    };
+    window.TV_kbdClose = function () {
+      var i = document.getElementById('tvkbd');
+      window.__tvKbdWant = 0;
+      i.blur(); window.__tvKbdEnter = 0;
+    };
+
     var statusEl = document.getElementById('status');
     var Module = {
       canvas: document.getElementById('canvas'),
