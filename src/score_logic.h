@@ -63,13 +63,15 @@ static int _sl_resolve_pass(Player *p, int i) {
  *  letter : base char stored in Subject_Node.score_letter ('A','B','C','D','F')
  *  plus   : non-zero if the full grade string has a '+' modifier (e.g., "A+")
  *
- *  Scale:  A+ 4.5 | A 4.0 | B+ 3.5 | B 3.0 | C+ 2.5 | C 2.0
- *          D+ 1.5 | D 1.0 | F/X 0.0
+ *  True HUST 4.0 scale:  A+ 4.0 | A 4.0 | B+ 3.5 | B 3.0 | C+ 2.5 | C 2.0
+ *                        D+ 1.5 | D 1.0 | F/X 0.0
+ *  A and A+ both cap at 4.0 — the CPA can never exceed 4.0, so the honor
+ *  classification bands (Normal..God of HUST, topping at 4.0) line up exactly.
  * ──────────────────────────────────────────────────────────────────────── */
 static float score_to_gpa(char letter, int plus)
 {
     switch (letter) {
-        case 'A': return plus ? 4.5f : 4.0f;
+        case 'A': return 4.0f;                 /* A and A+ both cap at 4.0 */
         case 'B': return plus ? 3.5f : 3.0f;
         case 'C': return plus ? 2.5f : 2.0f;
         case 'D': return plus ? 1.5f : 1.0f;
@@ -285,4 +287,151 @@ static int calc_missing_types(Player *p, int out[sizeSubjectType])
         }
     }
     return count;
+}
+
+/* ── Honor classification (HUST graduation tiers) ─────────────────────────
+ *  Bands on the cumulative CPA (now 0..4.0 on the true 4.0 scale):
+ *    < 2.0      HONOR_NONE       (not eligible to graduate)
+ *    2.0–2.49   HONOR_NORMAL
+ *    2.5–3.19   HONOR_GOOD
+ *    3.2–3.59   HONOR_EXCELLENT
+ *    3.6–4.0    HONOR_GOD        ("God of HUST")
+ * ──────────────────────────────────────────────────────────────────────── */
+typedef enum {
+    HONOR_NONE = 0,
+    HONOR_NORMAL,
+    HONOR_GOOD,
+    HONOR_EXCELLENT,
+    HONOR_GOD
+} HonorTier;
+
+/* CPA floor required to enter each tier — index by HonorTier. */
+static const float kHonorFloor[5] = { 0.0f, 2.0f, 2.5f, 3.2f, 3.6f };
+
+static HonorTier honor_tier(float cpa)
+{
+    if (cpa >= kHonorFloor[HONOR_GOD])       return HONOR_GOD;
+    if (cpa >= kHonorFloor[HONOR_EXCELLENT]) return HONOR_EXCELLENT;
+    if (cpa >= kHonorFloor[HONOR_GOOD])      return HONOR_GOOD;
+    if (cpa >= kHonorFloor[HONOR_NORMAL])    return HONOR_NORMAL;
+    return HONOR_NONE;
+}
+
+static const char *honor_name(HonorTier t)
+{
+    switch (t) {
+        case HONOR_NORMAL:    return "Normal";
+        case HONOR_GOOD:      return "Good";
+        case HONOR_EXCELLENT: return "Excellent";
+        case HONOR_GOD:       return "God of HUST";
+        default:              return "Below classification";
+    }
+}
+
+/* Smallest letter grade whose GPA point meets `g` (for "you need at least L"). */
+static void gpa_to_letter(float g, char *letter, int *plus)
+{
+    if      (g > 3.5f) { *letter = 'A'; *plus = 0; }   /* 3.5 <   .. 4.0  */
+    else if (g > 3.0f) { *letter = 'B'; *plus = 1; }   /* B+ 3.5          */
+    else if (g > 2.5f) { *letter = 'B'; *plus = 0; }   /* B  3.0          */
+    else if (g > 2.0f) { *letter = 'C'; *plus = 1; }   /* C+ 2.5          */
+    else if (g > 1.5f) { *letter = 'C'; *plus = 0; }   /* C  2.0          */
+    else if (g > 1.0f) { *letter = 'D'; *plus = 1; }   /* D+ 1.5          */
+    else               { *letter = 'D'; *plus = 0; }   /* D  1.0 (min pass) */
+}
+
+/* ── Graduation honor projection ─────────────────────────────────────────
+ *  Forecasts the honor tier at graduation from current performance.
+ *
+ *  Model (a forecast, not an exact transcript recompute):
+ *    eff  = calc_effective_credits(p)   credits already passed toward the degree
+ *    req  = calc_required_credits(p)    credits needed to graduate
+ *    R    = req - eff                   remaining credits still to earn
+ *    rate = calc_cpa(p, 1)              pass-only CPA (quality of work so far)
+ *    P    = rate * eff                  locked GPA points (approx — pass-only
+ *                                       rate applied over effective credits)
+ *  "Maintain current average" ⇒ projected final CPA = rate, so the headline
+ *  tier is honor_tier(rate). Failed (F) subjects are treated as part of R
+ *  (assumed retaken & replaced), not permanent 0-point anchors.
+ *
+ *  Reachable range given R credits left:
+ *    ceiling = (P + 4.0*R) / req   (all remaining = A)
+ *    floor   = (P + 1.0*R) / req   (all remaining = D, the minimum pass)
+ * ──────────────────────────────────────────────────────────────────────── */
+typedef struct {
+    int       eff, req, remaining;  /* credits                              */
+    float     rate;                 /* pass-only CPA = projected final CPA  */
+    float     ceiling, floor;       /* reachable CPA range given R          */
+    HonorTier projected;            /* honor_tier(rate)                     */
+    HonorTier best, worst;          /* honor_tier(ceiling / floor)          */
+} HonorProjection;
+
+static HonorProjection honor_project(Player *p)
+{
+    HonorProjection hp;
+    hp.eff       = calc_effective_credits(p);
+    hp.req       = calc_required_credits(p);
+    hp.remaining = hp.req - hp.eff;
+    if (hp.remaining < 0) hp.remaining = 0;
+    hp.rate      = calc_cpa(p, 1);
+    int   req    = hp.req > 0 ? hp.req : 1;
+    float P      = hp.rate * (float)hp.eff;
+    hp.ceiling   = (P + 4.0f * (float)hp.remaining) / (float)req;
+    hp.floor     = (P + 1.0f * (float)hp.remaining) / (float)req;
+    if (hp.ceiling > 4.0f) hp.ceiling = 4.0f;
+    if (hp.floor   < 0.0f) hp.floor   = 0.0f;
+    hp.projected = honor_tier(hp.rate);
+    hp.best      = honor_tier(hp.ceiling);
+    hp.worst     = honor_tier(hp.floor);
+    return hp;
+}
+
+/* ── Target feasibility for a chosen honor tier ───────────────────────────
+ *  Given a projection and a desired tier, what average must the remaining R
+ *  credits earn?   needed = (T*req - P) / R   where T = tier's CPA floor.
+ *    needed <= 1.0  → SECURED  (any passing grades reach it)
+ *    needed >  4.0  → IMPOSSIBLE (even all-A falls short)
+ *    otherwise      → REACHABLE at grade `need_letter`(+)
+ * ──────────────────────────────────────────────────────────────────────── */
+typedef enum {
+    TARGET_SECURED = 0,
+    TARGET_REACHABLE,
+    TARGET_IMPOSSIBLE
+} TargetStatus;
+
+typedef struct {
+    TargetStatus status;
+    float        needed_avg;   /* required average GPA over remaining credits */
+    char         need_letter;  /* smallest letter meeting needed_avg          */
+    int          need_plus;    /* whether that letter carries a '+'           */
+} TargetPlan;
+
+static TargetPlan honor_target_plan(const HonorProjection *hp, HonorTier target)
+{
+    TargetPlan tp;
+    float T = kHonorFloor[target];
+
+    if (hp->remaining <= 0) {
+        /* nothing left to change — the current rate decides it */
+        tp.status     = (hp->rate >= T) ? TARGET_SECURED : TARGET_IMPOSSIBLE;
+        tp.needed_avg = 0.0f;
+        gpa_to_letter(1.0f, &tp.need_letter, &tp.need_plus);
+        return tp;
+    }
+
+    float P    = hp->rate * (float)hp->eff;
+    float need = (T * (float)hp->req - P) / (float)hp->remaining;
+    tp.needed_avg = need;
+
+    if (need <= 1.0f) {
+        tp.status = TARGET_SECURED;            /* just pass remaining work */
+        gpa_to_letter(1.0f, &tp.need_letter, &tp.need_plus);
+    } else if (need > 4.0f) {
+        tp.status = TARGET_IMPOSSIBLE;
+        gpa_to_letter(4.0f, &tp.need_letter, &tp.need_plus);
+    } else {
+        tp.status = TARGET_REACHABLE;
+        gpa_to_letter(need, &tp.need_letter, &tp.need_plus);
+    }
+    return tp;
 }
