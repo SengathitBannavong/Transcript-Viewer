@@ -59,12 +59,99 @@ WEB_LDFLAGS = $(WEB_RAYLIB_LIB) $(SQLITE_WEB_OBJ) \
               -lidbfs.js --shell-file $(WEB_SHELL) \
               --preload-file assets --preload-file Font -lm
 
-.PHONY: all linux clean setup test web web-setup web-serve web-clean
+.PHONY: all linux linux-package linux-appimage clean setup test web web-setup web-serve web-clean
 
 all: setup $(TARGET)
 
 # Explicit native (desktop Linux) target — same as `all` on Linux.
 linux: all
+
+# ── Linux distributable package ───────────────────────────────────────────
+# Produces a self-contained <name>.zip with SQLite statically compiled into
+# the binary (no libsqlite3 needed on the target machine) plus assets/ + Font/.
+# NOTE: OpenGL (libGL) and X11 must stay dynamically linked — they come from
+# the host's graphics drivers, so a *fully* static GUI binary is not possible.
+PKG_NAME       = transcript-viewer-linux
+PKG_STAGE      = $(PKG_NAME)
+PKG_ZIP        = $(PKG_NAME).zip
+PKG_BIN        = bin/$(PKG_NAME)
+SQLITE_PKG_OBJ = sqlite3.pkg.o
+PKG_LDFLAGS    = $(RAYLIB)/lib/libraylib.a $(SQLITE_PKG_OBJ) \
+                 -lGL -lpthread -ldl -lX11 -lXrandr -lXi -lXinerama -lXcursor \
+                 -lm -static-libgcc
+
+# Shared stripped binary with SQLite statically linked in. Used by both the
+# .zip package and the AppImage. `setup` is order-only so it doesn't force a
+# rebuild every time.
+$(PKG_BIN): $(SRC) $(SRCDIR)/clay.h $(SQLITE_PKG_OBJ) | setup
+	@mkdir -p bin
+	$(CC) $(CFLAGS) $(SRC) -o $(PKG_BIN) $(PKG_LDFLAGS)
+	strip $(PKG_BIN)
+
+linux-package: $(PKG_BIN)
+	@command -v zip >/dev/null 2>&1 || { echo "ERROR: 'zip' not found. Install it (e.g. dnf install zip)."; exit 1; }
+	@echo "Staging package files..."
+	@rm -rf $(PKG_STAGE) $(PKG_ZIP)
+	@mkdir -p $(PKG_STAGE)
+	@cp $(PKG_BIN) $(PKG_STAGE)/program
+	@cp -r assets $(PKG_STAGE)/assets
+	@cp -r Font   $(PKG_STAGE)/Font
+	@if [ -f README.md ]; then cp README.md $(PKG_STAGE)/; fi
+	@echo "Zipping..."
+	@zip -r -q $(PKG_ZIP) $(PKG_STAGE)
+	@rm -rf $(PKG_STAGE)
+	@echo "Created $(PKG_ZIP)  (unzip, then run ./program)"
+
+# SQLite compiled from the amalgamation for the packaged build (statically linked).
+$(SQLITE_PKG_OBJ): sqlite3.c sqlite3.h
+	$(CC) -O2 -DSQLITE_OMIT_LOAD_EXTENSION -c sqlite3.c -o $(SQLITE_PKG_OBJ)
+
+# ── AppImage ──────────────────────────────────────────────────────────────
+# Self-contained portable single-file app. Bundles the same static-SQLite
+# binary plus assets/ + Font/. appimagetool is downloaded on demand.
+# At runtime the AppImage mounts read-only, so AppRun runs the program from a
+# writable per-user data dir (~/.local/share/transcript-viewer) where the
+# db_<user>.db files are written; bundled assets/Font are symlinked in.
+APPID            = transcript-viewer
+APPDIR           = AppDir
+APPIMAGE_OUT     = Transcript_Viewer-x86_64.AppImage
+APPIMAGETOOL     = ./appimagetool-x86_64.AppImage
+APPIMAGETOOL_URL = https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+
+$(APPIMAGETOOL):
+	@echo "Downloading appimagetool..."
+	curl -fsSL $(APPIMAGETOOL_URL) -o $(APPIMAGETOOL)
+	chmod +x $(APPIMAGETOOL)
+
+linux-appimage: $(PKG_BIN) $(APPIMAGETOOL)
+	@echo "Assembling AppDir..."
+	@rm -rf $(APPDIR) $(APPIMAGE_OUT)
+	@mkdir -p $(APPDIR)/usr/bin $(APPDIR)/usr/share/$(APPID) \
+	          $(APPDIR)/usr/share/applications \
+	          $(APPDIR)/usr/share/icons/hicolor/256x256/apps
+	@cp $(PKG_BIN) $(APPDIR)/usr/bin/program
+	@cp -r assets  $(APPDIR)/usr/share/$(APPID)/assets
+	@cp -r Font    $(APPDIR)/usr/share/$(APPID)/Font
+	@printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=Transcript Viewer' \
+	  'Exec=program' 'Icon=$(APPID)' 'Categories=Education;' 'Terminal=false' \
+	  > $(APPDIR)/$(APPID).desktop
+	@cp $(APPDIR)/$(APPID).desktop $(APPDIR)/usr/share/applications/$(APPID).desktop
+	@python3 -c "import zlib,struct; W=H=256; raw=b''.join(b'\x00'+b'\x26\x5a\xc8'*W for _ in range(H)); ch=lambda t,d: struct.pack('>I',len(d))+t+d+struct.pack('>I',zlib.crc32(t+d)&0xffffffff); open('$(APPDIR)/$(APPID).png','wb').write(b'\x89PNG\r\n\x1a\n'+ch(b'IHDR',struct.pack('>IIBBBBB',W,H,8,2,0,0,0))+ch(b'IDAT',zlib.compress(raw,9))+ch(b'IEND',b''))"
+	@cp $(APPDIR)/$(APPID).png $(APPDIR)/usr/share/icons/hicolor/256x256/apps/$(APPID).png
+	@printf '%s\n' '#!/bin/sh' \
+	  'HERE="$$(dirname "$$(readlink -f "$$0")")"' \
+	  'APPDATA="$${XDG_DATA_HOME:-$$HOME/.local/share}/$(APPID)"' \
+	  'mkdir -p "$$APPDATA"' \
+	  'ln -sfn "$$HERE/usr/share/$(APPID)/assets" "$$APPDATA/assets"' \
+	  'ln -sfn "$$HERE/usr/share/$(APPID)/Font" "$$APPDATA/Font"' \
+	  'cd "$$APPDATA" || exit 1' \
+	  'exec "$$HERE/usr/bin/program" "$$@"' \
+	  > $(APPDIR)/AppRun
+	@chmod +x $(APPDIR)/AppRun
+	@echo "Building AppImage..."
+	ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 $(APPIMAGETOOL) $(APPDIR) $(APPIMAGE_OUT)
+	@rm -rf $(APPDIR)
+	@echo "Created $(APPIMAGE_OUT)  (chmod +x, then ./$(APPIMAGE_OUT))"
 
 setup:
 	@mkdir -p bin
@@ -135,6 +222,6 @@ web-clean:
 	rm -rf $(WEB_OUTDIR) $(SQLITE_WEB_OBJ)
 
 clean:
-	rm -f $(TARGET) $(TEST_TARGET) $(SQLITE_OBJ) $(SQLITE_WEB_OBJ)
-	rm -rf $(WEB_OUTDIR)
+	rm -f $(TARGET) $(TEST_TARGET) $(SQLITE_OBJ) $(SQLITE_WEB_OBJ) $(SQLITE_PKG_OBJ) $(PKG_ZIP) $(PKG_BIN) $(APPIMAGE_OUT)
+	rm -rf $(WEB_OUTDIR) $(PKG_STAGE) $(APPDIR)
 
