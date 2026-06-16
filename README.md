@@ -15,6 +15,7 @@ Stores per-user data in a local **SQLite3** database. No server or internet conn
 - Academic alert level (warning / danger) shown as a banner
 - Command palette (`Ctrl+K`) for fast score entry and navigation
 - Configurable font and FPS via `assets/ui.cfg` (no recompile needed)
+- Import / export the database as a portable `.db` file (move data between machines)
 
 ---
 
@@ -179,6 +180,40 @@ Example:
 font_scale 2.0
 target_fps 144
 ```
+
+---
+
+## Import / Export Database
+
+Each user's data lives in a single SQLite file (`db_<username>.db`). The **Export**
+and **Import** buttons in the sidebar let you back it up or move it between
+machines (and to/from the web build, which uses the same format).
+
+**Export** — saves a copy of the current database.
+- Opens a native *Save file* dialog (`zenity`, falling back to `kdialog`).
+- If neither dialog tool is installed (headless / minimal desktop), the file is
+  copied to `$HOME/db_<username>.db` instead and the destination is shown.
+
+**Import** — replaces the current user's database with a chosen `.db` file.
+- Opens a native *Open file* dialog, **or** simply **drag a `.db` file onto the
+  window** (works with no dialog tool installed).
+- The file is validated as a real SQLite database before anything is replaced;
+  an invalid file is rejected and the current data is left untouched.
+- The table and dashboard refresh immediately after a successful import.
+
+> The native file dialogs use `zenity` (GNOME) or `kdialog` (KDE), which ship with
+> most desktops but are **not** bundled in the AppImage. On a system without
+> either, export falls back to `$HOME` and import works via drag-and-drop — so the
+> feature degrades gracefully. To guarantee the dialogs are available:
+>
+> ```bash
+> # Debian/Ubuntu: sudo apt install zenity
+> # Fedora:        sudo dnf install zenity
+> # Arch:          sudo pacman -S zenity
+> ```
+
+> **Web build:** Export triggers a browser download and Import opens the browser's
+> file picker; the database is stored in the browser (IndexedDB).
 
 ---
 

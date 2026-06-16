@@ -882,6 +882,125 @@ static int DB_ImportPoll(const char *username)
     }
     return (st == 3) ? -1 : 0;
 }
+#else  /* ── desktop import/export: the .db is a real file on disk ───────── */
+
+/* Copy a file byte-for-byte. Returns 1 on success. */
+static int tv_file_copy(const char *src, const char *dst)
+{
+    FILE *in = fopen(src, "rb");
+    if (!in) return 0;
+    FILE *out = fopen(dst, "wb");
+    if (!out) { fclose(in); return 0; }
+    char buf[1 << 15];
+    size_t r; int ok = 1;
+    while ((r = fread(buf, 1, sizeof buf, in)) > 0)
+        if (fwrite(buf, 1, r, out) != r) { ok = 0; break; }
+    if (ferror(in)) ok = 0;
+    fclose(in);
+    if (fclose(out) != 0) ok = 0;
+    return ok;
+}
+
+/* True if a program is available on PATH. */
+static int tv_have(const char *prog)
+{
+    char cmd[128];
+    snprintf(cmd, sizeof cmd, "command -v %s >/dev/null 2>&1", prog);
+    return system(cmd) == 0;
+}
+
+/* Run a dialog command, capture its first stdout line into out (newline
+ * stripped). Returns 1 if a non-empty path was produced (user confirmed). */
+static int tv_dialog(const char *cmd, char *out, size_t n)
+{
+    FILE *p = popen(cmd, "r");
+    if (!p) return 0;
+    out[0] = 0;
+    if (!fgets(out, (int)n, p)) { pclose(p); return 0; }
+    int rc = pclose(p);
+    size_t L = strlen(out);
+    while (L && (out[L-1] == '\n' || out[L-1] == '\r')) out[--L] = 0;
+    return (rc == 0 && L > 0);
+}
+
+/* Native "save file" dialog seeded with a sensible name. 1 = picked. */
+static int DB_PickSavePath(const char *suggest, char *outpath, size_t n)
+{
+    char cmd[1024];
+    if (tv_have("zenity")) {
+        snprintf(cmd, sizeof cmd,
+            "zenity --file-selection --save --confirm-overwrite "
+            "--title='Export transcript database' --filename='%s' 2>/dev/null", suggest);
+        return tv_dialog(cmd, outpath, n);
+    }
+    if (tv_have("kdialog")) {
+        snprintf(cmd, sizeof cmd,
+            "kdialog --getsavefilename '%s' '*.db|SQLite database' 2>/dev/null", suggest);
+        return tv_dialog(cmd, outpath, n);
+    }
+    return 0;
+}
+
+/* Native "open file" dialog. 1 = picked. */
+static int DB_PickOpenPath(char *outpath, size_t n)
+{
+    if (tv_have("zenity"))
+        return tv_dialog("zenity --file-selection "
+            "--title='Import transcript database' "
+            "--file-filter='SQLite database | *.db' "
+            "--file-filter='All files | *' 2>/dev/null", outpath, n);
+    if (tv_have("kdialog"))
+        return tv_dialog("kdialog --getopenfilename . '*.db|SQLite database' 2>/dev/null",
+                         outpath, n);
+    return 0;
+}
+
+/* Export: copy the live db file to a user-chosen path. If no dialog tool is
+ * installed (headless / minimal desktop) fall back to copying into $HOME.
+ * Returns 1 = ok (outpath holds destination), 0 = copy failed, -1 = cancelled. */
+static int DB_ExportFile(const char *username, char *outpath, size_t n)
+{
+    char src[256], suggest[512];
+    db_path(username, src, sizeof src);
+    const char *home = getenv("HOME");
+    snprintf(suggest, sizeof suggest, "%s/db_%s.db", home ? home : ".", username);
+
+    char dst[1024];
+    if (DB_PickSavePath(suggest, dst, sizeof dst)) {
+        /* user chose a path */
+    } else if (tv_have("zenity") || tv_have("kdialog")) {
+        return -1;                                   /* dialog ran, cancelled */
+    } else {
+        snprintf(dst, sizeof dst, "%s", suggest);    /* headless fallback → $HOME */
+    }
+    if (!tv_file_copy(src, dst)) return 0;
+    snprintf(outpath, n, "%s", dst);
+    return 1;
+}
+
+/* Import: verify src is a valid SQLite db, copy it over our db file, then
+ * reopen and refresh rules. Returns 1 ok, 0 failed (db left untouched/reopened). */
+static int DB_ImportFile(const char *username, const char *src)
+{
+    sqlite3 *probe = NULL;
+    if (sqlite3_open_v2(src, &probe, SQLITE_OPEN_READONLY, NULL) != SQLITE_OK) {
+        if (probe) sqlite3_close(probe);
+        return 0;
+    }
+    /* Touch the schema so a non-SQLite file (renamed .db) is rejected here. */
+    int valid = (sqlite3_exec(probe, "PRAGMA schema_version;", NULL, NULL, NULL) == SQLITE_OK);
+    sqlite3_close(probe);
+    if (!valid) return 0;
+
+    char dst[256];
+    db_path(username, dst, sizeof dst);
+    DB_Close();
+    if (!tv_file_copy(src, dst)) { DB_Open(username); return 0; }
+    if (!DB_Open(username)) return 0;
+    DB_CreateSchema();        /* tolerate older / partial files */
+    DB_LoadGradRules();
+    return 1;
+}
 #endif /* PLATFORM_WEB */
 
 #endif /* DB_H */
