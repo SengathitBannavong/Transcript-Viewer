@@ -1,70 +1,55 @@
-/*
- * ui.c — Clay rendering layer for the Student Transcript Viewer
- *
- * NOT compiled independently. Included into main.c AFTER all globals
- * and db.h/app_data.h are declared.
- *
- * Globals expected from main.c:
- *   int   gScreenW, gScreenH   — current window dimensions
- *   int   gActiveNav           — active subject-type section (0 = sizeSubjectType-1)
- *   char  gDynBuf[], gDynPos   — per-frame dynamic string arena
- *   bool  gPopupOpen           — command palette visibility
- *   char  gCmdBuf[], gCmdLen   — current typed text
- *   bool  gHasResult           — whether a toast should be shown
- *   float gResultShowUntil     — GetTime() deadline for the toast
- *   char  gResultMsg[]         — result message shown in toast
- *   Player gPlayer             — filled by DB_Query()
- */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
 
-/* ─── Layout constants ───────────────────────────────────────────────── */
-#define SIDEBAR_W   248
-#define ROW_H        44
-#define HDR_H        42
+#include "ui.h"
+#include "app_data.h"
+#include "db.h"
+#include "score_logic.h"
+#include "raylib.h"
 
-/* Single responsive breakpoint: < BP_MOBILE → phone layout (drawer nav +
- * priority columns). gIsMobile (main.c) is recomputed from gScreenW each frame. */
-#define BP_MOBILE   900
+#define gScreenW (gApp.screen_w)
+#define gScreenH (gApp.screen_h)
+#define gActiveNav (gApp.active_nav)
+#define gDynBuf (gApp.dyn_buf)
+#define gDynPos (gApp.dyn_pos)
+#define gPopupOpen (gApp.popup_open)
+#define gCmdBuf (gApp.cmd_buf)
+#define gCmdLen (gApp.cmd_len)
+#define gHasResult (gApp.has_result)
+#define gResultShowUntil (gApp.result_show_until)
+#define gResultMsg (gApp.result_msg)
+#define gPlayer (gApp.player)
+#define gFonts (gApp.fonts)
+#define gCustomFont (gApp.custom_font)
+#define gIsMobile (gApp.is_mobile)
+#define gDrawerOpen (gApp.drawer_open)
+#define gRowHover (gApp.row_hover)
+#define gIsTouch (gApp.is_touch)
+#define gPlanTarget (gApp.plan_target)
+#define gPlanFlex (gApp.plan_flex)
+#define gEditOpen (gApp.edit_open)
+#define gEditCode (gApp.edit_code)
+#define gEditMidBuf (gApp.edit_mid_buf)
+#define gEditMidLen (gApp.edit_mid_len)
+#define gEditFinBuf (gApp.edit_fin_buf)
+#define gEditFinLen (gApp.edit_fin_len)
+#define gEditField (gApp.edit_field)
+#define gEditRatio (gApp.edit_ratio)
+#define gEditSubjectName (gApp.edit_subject_name)
+#define gEditError (gApp.edit_error)
+#define gFontScale (gApp.font_scale)
+#define gTargetFPS (gApp.target_fps)
+#define gNameInput (gApp.name_input)
+#define gDBReady (gApp.db_ready)
+#define gUserName (gApp.user_name)
+#define gNameLen (gApp.name_len)
+#define gTypeName (gApp.type_name)
+#define gGradRules (gApp.grad_rules)
+#define gDataWarningsBuf (gApp.data_warnings_buf)
+#define gDataWarnCount (gApp.data_warn_count)
 
-/* Pseudo-nav index for the Graduation Planner view (sits past the real subject
- * types so the sidebar's 1..sizeSubjectType-1 loop never auto-renders it). */
-#define NAV_PLANNER (sizeSubjectType)
-
-/* ─── Spacing scale ──────────────────────────────────────────────────────
- * One scale, used deliberately: tight gaps bind a group, generous gaps
- * separate sections. Rhythm comes from choosing, not from a single value.
- * ──────────────────────────────────────────────────────────────────────── */
-#define SP_XS   4
-#define SP_SM   8
-#define SP_MD  14
-#define SP_LG  22
-#define SP_XL  32
-
-/* ─── Colors — Academic "paper" theme ────────────────────────────────────
- * Warm paper surface + ink + one committed scholarly accent (oxblood).
- * Every neutral is tinted warm; no pure #000 / #fff. Grade colors are a
- * muted semantic ramp that reads on a light page (not neon).
- * ──────────────────────────────────────────────────────────────────────── */
-#define C_BG         ((Clay_Color){241, 237, 229, 255})  /* warm paper page   */
-#define C_SIDEBAR    ((Clay_Color){234, 229, 219, 255})  /* deeper paper edge */
-#define C_CARD       ((Clay_Color){250, 248, 243, 255})  /* raised panel      */
-#define C_TBL_HDR    ((Clay_Color){236, 231, 221, 255})  /* header band       */
-#define C_ROW_ODD    ((Clay_Color){247, 244, 238, 255})  /* ledger stripe     */
-#define C_ROW_EVEN   ((Clay_Color){252, 250, 246, 255})
-#define C_ROW_HOVER  ((Clay_Color){244, 230, 227, 255})  /* pale crimson wash */
-#define C_BORDER     ((Clay_Color){221, 214, 201, 255})  /* hairline rule     */
-#define C_ACCENT     ((Clay_Color){140,  47,  42, 255})  /* oxblood crimson   */
-#define C_ACCENT_DIM ((Clay_Color){176,  92,  86, 255})  /* faded crimson     */
-#define C_ACCENT_BG  ((Clay_Color){243, 228, 225, 255})  /* pale crimson wash */
-#define C_TEXT       ((Clay_Color){ 27,  26,  23, 255})  /* ink               */
-#define C_SUBTEXT    ((Clay_Color){122, 116, 104, 255})  /* muted ink         */
-#define C_WHITE      ((Clay_Color){250, 248, 244, 255})  /* paper-white (on accent) */
-#define C_GREEN      ((Clay_Color){ 47, 120,  75, 255})  /* forest (pass)     */
-#define C_GREEN_BG   ((Clay_Color){222, 236, 224, 255})  /* pale sage         */
-#define C_RED        ((Clay_Color){178,  52,  42, 255})  /* brick (fail)      */
-#define C_RED_BG     ((Clay_Color){246, 225, 221, 255})  /* pale rose         */
-#define C_YELLOW     ((Clay_Color){166, 124,  36, 255})  /* ochre             */
-#define C_YELLOW_BG  ((Clay_Color){245, 236, 212, 255})  /* pale cream        */
-#define C_TRANS      ((Clay_Color){  0,   0,   0,   0})
 
 /* ─── Text config helper ─────────────────────────────────────────────── */
 /* gFontScale is declared in main.c and loaded from assets/ui.cfg        */
@@ -175,7 +160,7 @@ static void RenderNavItem(int idx, const char *label, int warn)
     }
 }
 
-static void RenderSidebar(void)
+void RenderSidebar(void)
 {
     CLAY(CLAY_ID("Sidebar"), {
         .layout = {
@@ -287,8 +272,7 @@ static void RenderSidebar(void)
                     else if (rc == -1) snprintf(gResultMsg, sizeof(gResultMsg), "Export cancelled");
                     else               snprintf(gResultMsg, sizeof(gResultMsg), "Export failed");
 #endif
-                    gHasResult       = true;
-                    gResultShowUntil = (float)GetTime() + 4.f;
+                    ShowToastFor(4.f);
                 }
                 CLAY_TEXT(CLAY_STRING("Export .db"), TC(C_TEXT, 10));
             }
@@ -321,11 +305,48 @@ static void RenderSidebar(void)
                         snprintf(gResultMsg, sizeof(gResultMsg),
                                  "No file dialog found - drag a .db onto the window");
                     }
-                    gHasResult       = true;
-                    gResultShowUntil = (float)GetTime() + 4.f;
+                    ShowToastFor(4.f);
 #endif
                 }
                 CLAY_TEXT(CLAY_STRING("Import .db"), TC(C_TEXT, 10));
+            }
+        }
+
+        /* Reload Config */
+        CLAY(CLAY_ID("ConfigReload"), {
+            .layout = {
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(32) },
+                .childGap        = 6,
+                .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                .layoutDirection = CLAY_LEFT_TO_RIGHT,
+            },
+        }) {
+            CLAY(CLAY_ID("ConfigReloadBtn"), {
+                .layout = {
+                    .sizing         = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(30) },
+                    .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+                },
+                .backgroundColor = Clay_Hovered() ? C_ACCENT_DIM : C_CARD,
+                .cornerRadius    = CLAY_CORNER_RADIUS(5),
+                .border          = { .color = C_BORDER,
+                                     .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+            }) {
+                if (gDBReady && Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                    int prev_warns = gDataWarnCount;
+                    DB_ReloadData();
+                    RefreshPlayer();
+                    if (gDataWarnCount == 0) {
+                        snprintf(gResultMsg, sizeof(gResultMsg),
+                                 "Reload OK: all data valid (was %d warnings)",
+                                 prev_warns);
+                    } else {
+                        snprintf(gResultMsg, sizeof(gResultMsg),
+                                 "Reload done. %d warning%s remain",
+                                 gDataWarnCount, gDataWarnCount == 1 ? "" : "s");
+                    }
+                    ShowToastFor(5.f);
+                }
+                CLAY_TEXT(CLAY_STRING("Reload Config"), TC(C_TEXT, 10));
             }
         }
 
@@ -382,7 +403,7 @@ static void RenderSidebar(void)
  *  MOBILE TOP BAR + DRAWER  (shown below BP_MOBILE in place of the sidebar)
  * ═══════════════════════════════════════════════════════════════════════ */
 
-static void RenderTopBar(void)
+void RenderTopBar(void)
 {
     CLAY(CLAY_ID("TopBar"), {
         .layout = {
@@ -433,7 +454,7 @@ static void RenderTopBar(void)
 
 /* Sidebar-as-drawer: full-screen scrim (tap to dismiss) + the sidebar floating
  * in from the left. Rendered as a top-level overlay when gDrawerOpen on mobile. */
-static void RenderDrawer(void)
+void RenderDrawer(void)
 {
     /* scrim */
     CLAY(CLAY_ID("DrawerScrim"), {
@@ -747,7 +768,7 @@ static void RenderTableRow(Subject_Node *node, int idx)
  *  MAIN CONTENT
  * ═══════════════════════════════════════════════════════════════════════ */
 
-static void RenderMainContent(void)
+void RenderMainContent(void)
 {
     Subject_Type *st = &gPlayer.numofSubjectType[gActiveNav];
 
@@ -1050,17 +1071,8 @@ static const Clay_Color kTypeColors[13] = {
     { 120, 100,  92, 255}, /* 13 do_an_tot_nghiep  — taupe     */
 };
 
-/*
- * Donut placeholder element IDs — main.c reads their bounding boxes after
- * Clay_Raylib_Render and draws the Raylib rings on top.
- * Index 0 = grade-distribution donut; indices 1-13 = per-type mini-ring.
- */
-#define DONUT_GRADE_ID  "DashDonutGrade"
-#define DONUT_CPA_ID    "DashDonutCPA"
-#define RADAR_GRADE_ID  "DashRadarGrade"
-
 /* Nine grade buckets, fine-grained (with +/- modifier): A+ A B+ B C+ C D+ D F */
-static const char *kGradeLabels[9] = { "A+","A","B+","B","C+","C","D+","D","F" };
+const char *kGradeLabels[9] = { "A+","A","B+","B","C+","C","D+","D","F" };
 
 /* Color band for a bucket index — shared by the breakdown bars and the radar. */
 static Clay_Color grade_band_color(int b)
@@ -1088,7 +1100,7 @@ static Clay_Color honor_color(HonorTier t)
 
 /* Count studied subjects into the nine buckets. Visible to main.c (which
  * #includes this file) for drawing the radar polygon. */
-static void calc_grade_counts(int out[9])
+void calc_grade_counts(int out[9])
 {
     for (int i = 0; i < 9; i++) out[i] = 0;
     for (int t = 1; t < sizeSubjectType; t++) {
@@ -1114,36 +1126,12 @@ static void calc_grade_counts(int out[9])
 }
 
 
-static void RenderDashboard(void)
+void RenderDashboard(void)
 {
-    /* pre-compute grade counts across ALL subject types */
-    int cnt_A=0, cnt_B=0, cnt_C=0, cnt_D=0, cnt_F=0, cnt_X=0;
-    int total_studied = 0;
-    for (int t = 1; t < sizeSubjectType; t++) {
-        if (t == the_thao) continue;  /* sport scores excluded from grade distribution */
-        Subject_Node *n = gPlayer.numofSubjectType[t].head;
-        while (n) {
-            if (n->status_ever_been_study & 1) {
-                switch (n->score_letter) {
-                    case 'A': cnt_A++; break;
-                    case 'B': cnt_B++; break;
-                    case 'C': cnt_C++; break;
-                    case 'D': cnt_D++; break;
-                    case 'F': cnt_F++; break;
-                    default:  cnt_X++; break;
-                }
-                total_studied++;
-            } else {
-                cnt_X++;
-            }
-            n = n->next;
-        }
-    }
     /* All subjects regardless of study */
     int total_subjects = 0;
     for (int t = 1; t < sizeSubjectType; t++)
         total_subjects += gPlayer.numofSubjectType[t].Total_Subject;
-    if (total_studied == 0) total_studied = 1; /* avoid div-0 for arcs */
 
     float cpa_all  = calc_cpa(&gPlayer, 0);
     int   eff      = calc_effective_credits(&gPlayer);
@@ -1597,7 +1585,7 @@ static bool plan_type_open(int t, const int *chosen)
     return (int)st->count_passCredit < _sl_resolve_limit(&gPlayer, t);
 }
 
-static void RenderPlanner(void)
+void RenderPlanner(void)
 {
     HonorProjection hp = honor_project(&gPlayer);
 
@@ -1948,7 +1936,7 @@ static const char *kRatioLabels[4] = { "", "50 / 50", "40 / 60", "30 / 70" };
 
 /* Append one keystroke to the active score field, mirroring the keyboard rules:
  * digits and a single '.', max 6 chars. ch == 8 (backspace) deletes one char. */
-static void EditKeyInput(int ch)
+void EditKeyInput(int ch)
 {
     char *buf = (gEditField == 0) ? gEditMidBuf : gEditFinBuf;
     int  *len = (gEditField == 0) ? &gEditMidLen : &gEditFinLen;
@@ -1968,7 +1956,7 @@ static void EditKeyInput(int ch)
 
 /* Validate + persist the current edit. Returns true on success; on failure
  * leaves the popup open and writes a message into gEditError. */
-static bool EditTrySave(void)
+bool EditTrySave(void)
 {
     float mid = (float)atof(gEditMidBuf);
     float fin = (float)atof(gEditFinBuf);
@@ -1989,8 +1977,7 @@ static bool EditTrySave(void)
     snprintf(gResultMsg, sizeof(gResultMsg),
              "Saved %s: mid=%.2f  final=%.2f  ratio=%s",
              gEditCode, mid, fin, kRatioLabels[gEditRatio]);
-    gHasResult       = true;
-    gResultShowUntil = (float)GetTime() + 5.f;
+    ShowToastFor(5.f);
     gEditError[0]    = '\0';
     gEditOpen        = false;
     return true;
@@ -2046,7 +2033,7 @@ static void RenderKeypad(float w)
     }
 }
 
-static void RenderEditPopup(void)
+void RenderEditPopup(void)
 {
     const char *const *ratio_labels = kRatioLabels;
 
@@ -2422,8 +2409,7 @@ static void RenderEditPopup(void)
                     RefreshPlayer();
                     snprintf(gResultMsg, sizeof(gResultMsg),
                              "Reset score for %s", gEditCode);
-                    gHasResult       = true;
-                    gResultShowUntil = (float)GetTime() + 5.f;
+                    ShowToastFor(5.f);
                     gEditError[0]    = '\0';
                     gEditOpen = false;
                 }
@@ -2454,7 +2440,7 @@ static void RenderEditPopup(void)
  *  NAME INPUT SCREEN  (shown on startup before DB is opened)
  * ═══════════════════════════════════════════════════════════════════════ */
 
-static void RenderNameInput(void)
+void RenderNameInput(void)
 {
     /* full-screen background */
     CLAY(CLAY_ID("NIBackdrop"), {
@@ -2581,7 +2567,7 @@ static void RenderNameInput(void)
  *  COMMAND PALETTE OVERLAY
  * ═══════════════════════════════════════════════════════════════════════ */
 
-static void RenderCommandPopup(void)
+void RenderCommandPopup(void)
 {
     /* full-screen backdrop */
     CLAY(CLAY_ID("PopupBackdrop"), {
@@ -2693,7 +2679,7 @@ static void RenderCommandPopup(void)
  *  RESULT TOAST
  * ═══════════════════════════════════════════════════════════════════════ */
 
-static void RenderResultToast(void)
+void RenderResultToast(void)
 {
     float remaining = gResultShowUntil - (float)GetTime();
     if (remaining <= 0.f) return;

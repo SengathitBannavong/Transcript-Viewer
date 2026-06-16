@@ -3,12 +3,10 @@
 /raylib*
 *.db
 
-# Downloaded SQLite amalgamation + compiled objects (fetched by `make`)
+# Compiled objects and downloaded SQLite source
+*.o
 sqlite3.c
 sqlite3.h
-sqlite3.o
-sqlite3.web.o
-sqlite3.pkg.o
 
 # Packaging artifacts (make linux-package / make linux-appimage)
 /transcript-viewer-linux

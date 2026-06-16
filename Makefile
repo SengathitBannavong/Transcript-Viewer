@@ -1,6 +1,12 @@
 CC   = gcc
 SRCDIR = src
-SRC  = $(SRCDIR)/main.c
+SRCS = $(SRCDIR)/main.c $(SRCDIR)/ui.c $(SRCDIR)/clay_renderer_raylib.c \
+       $(SRCDIR)/db.c $(SRCDIR)/score_logic.c $(SRCDIR)/cmd.c $(SRCDIR)/app_config.c
+OBJS = $(SRCS:.c=.o)
+APP_DEPS = $(SRCDIR)/app_config.h $(SRCDIR)/app_data.h \
+           $(SRCDIR)/cmd.h $(SRCDIR)/db.h $(SRCDIR)/score_logic.h \
+           $(SRCDIR)/struct_table.h $(SRCDIR)/ui.h $(SRCDIR)/clay_renderer_raylib.h
+
 
 # ── OS detection ──────────────────────────────────────────────────────────
 ifeq ($(OS),Windows_NT)
@@ -30,7 +36,7 @@ TARGET      = ./bin/program$(EXT)
 
 TEST_TARGET  = ./bin/test_logic$(EXT)
 TEST_SRC     = $(SRCDIR)/test_logic.c
-TEST_CFLAGS  = -O0 -g -Wall -Wno-missing-braces -I$(SRCDIR)
+TEST_CFLAGS  = -O0 -g -Wall -Wno-missing-braces -I$(RAYLIB)/include -I$(SRCDIR)
 TEST_LDFLAGS = $(SQLITE_OBJ) $(OS_TLDFLAGS) -lm
 
 CLAY_URL = https://raw.githubusercontent.com/nicbarker/clay/main/clay.h
@@ -83,9 +89,9 @@ PKG_LDFLAGS    = $(RAYLIB)/lib/libraylib.a $(SQLITE_PKG_OBJ) \
 # Shared stripped binary with SQLite statically linked in. Used by both the
 # .zip package and the AppImage. `setup` is order-only so it doesn't force a
 # rebuild every time.
-$(PKG_BIN): $(SRC) $(SRCDIR)/clay.h $(SQLITE_PKG_OBJ) | setup
+$(PKG_BIN): $(OBJS) $(SRCDIR)/clay.h $(SQLITE_PKG_OBJ) | setup
 	@mkdir -p bin
-	$(CC) $(CFLAGS) $(SRC) -o $(PKG_BIN) $(PKG_LDFLAGS)
+	$(CC) $(CFLAGS) $(OBJS) -o $(PKG_BIN) $(PKG_LDFLAGS)
 	strip $(PKG_BIN)
 
 linux-package: $(PKG_BIN)
@@ -174,16 +180,19 @@ $(SQLITE_OBJ): sqlite3.c sqlite3.h
 	$(CC) -O2 -c sqlite3.c -o $(SQLITE_OBJ)
 endif
 
-$(TARGET): $(SRC) $(SRCDIR)/clay.h $(SQLITE_OBJ)
+%.o: %.c $(APP_DEPS) $(SRCDIR)/clay.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(TARGET): $(OBJS) $(SRCDIR)/clay.h $(SQLITE_OBJ)
 	@mkdir -p bin
-	$(CC) $(CFLAGS) $(SRC) -o $(TARGET) $(LDFLAGS)
+	$(CC) $(CFLAGS) $(OBJS) -o $(TARGET) $(LDFLAGS)
 
 test: setup $(SQLITE_OBJ) $(TEST_TARGET)
 	$(TEST_TARGET)
 
-$(TEST_TARGET): $(TEST_SRC) $(SRCDIR)/app_data.h $(SRCDIR)/db.h $(SRCDIR)/score_logic.h $(SRCDIR)/struct_table.h $(SQLITE_OBJ)
+$(TEST_TARGET): $(TEST_SRC) $(SRCDIR)/db.c $(SRCDIR)/score_logic.c $(APP_DEPS) $(SQLITE_OBJ)
 	@mkdir -p bin
-	$(CC) $(TEST_CFLAGS) $(TEST_SRC) -o $(TEST_TARGET) $(TEST_LDFLAGS)
+	$(CC) $(TEST_CFLAGS) $(TEST_SRC) $(SRCDIR)/db.c $(SRCDIR)/score_logic.c -o $(TEST_TARGET) $(TEST_LDFLAGS)
 
 # ── WebAssembly targets ───────────────────────────────────────────────────
 web: web-setup $(SQLITE_WEB_OBJ)
@@ -192,7 +201,7 @@ web: web-setup $(SQLITE_WEB_OBJ)
 	@if [ ! -d Font ]; then \
 		echo "ERROR: ./Font directory not found. The .ttf files in assets/fonts.cfg must exist to be preloaded."; exit 1; fi
 	@mkdir -p $(WEB_OUTDIR)
-	$(EMCC) $(WEB_CFLAGS) $(SRC) -o $(WEB_OUTDIR)/index.html $(WEB_LDFLAGS)
+	$(EMCC) $(WEB_CFLAGS) $(SRCS) -o $(WEB_OUTDIR)/index.html $(WEB_LDFLAGS)
 	@echo "Built $(WEB_OUTDIR)/index.html  —  run 'make web-serve' then open http://localhost:8080"
 
 web-setup:
@@ -222,6 +231,5 @@ web-clean:
 	rm -rf $(WEB_OUTDIR) $(SQLITE_WEB_OBJ)
 
 clean:
-	rm -f $(TARGET) $(TEST_TARGET) $(SQLITE_OBJ) $(SQLITE_WEB_OBJ) $(SQLITE_PKG_OBJ) $(PKG_ZIP) $(PKG_BIN) $(APPIMAGE_OUT)
+	rm -f $(TARGET) $(TEST_TARGET) $(SQLITE_OBJ) $(SQLITE_WEB_OBJ) $(SQLITE_PKG_OBJ) $(PKG_ZIP) $(PKG_BIN) $(APPIMAGE_OUT) $(OBJS)
 	rm -rf $(WEB_OUTDIR) $(PKG_STAGE) $(APPDIR)
-

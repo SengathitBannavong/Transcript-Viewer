@@ -1,29 +1,13 @@
-/*
- * main.c -- Student Transcript Viewer (entry point + orchestration)
- *
- * Build:   make
- *
- * File layout
- * -----------
- *   Struct_Table.h  -- Player / Subject_Node / Subject_Type structs
- *   app_data.h      -- gPlayer global + gTypeName[]
- *   db.h            -- SQLite backend (DB_Open/Close/Query/Update)
- *   cmd.h           -- command palette dispatcher
- *   ui.c            -- all Clay rendering functions
- *   main.c          -- globals, keyboard handler, layout root, main()
- *
- * ui.c is NOT compiled separately; it is #include'd here after all
- * globals are defined so it can reference them directly.
- */
-
 #define CLAY_IMPLEMENTATION
 #include "clay.h"
 #include "raylib.h"
-#include "clay_renderer_raylib.c"   /* Raylib rendering backend  */
-
-#include "app_data.h"               /* gPlayer + gTypeName                */
-#include "db.h"                     /* SQLite backend                     */
-#include "score_logic.h"            /* CPA / graduation / alert logic     */
+#include "clay_renderer_raylib.h"
+#include "app_data.h"
+#include "app_config.h"
+#include "db.h"
+#include "score_logic.h"
+#include "cmd.h"
+#include "ui.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,79 +23,81 @@
 #define WIN_W  1400
 #define WIN_H   820
 
-/* --- Globals (read/written by ui.c) ----------------------------------- */
-static Font gFonts[1];
-static bool gCustomFont = false;
+/* Global Singleton Instance definition */
+AppContext gApp;
 
-/* active sidebar item: index into gPlayer.numofSubjectType */
-static int  gActiveNav  = 1;
-
-/* current window size; updated every frame for correct backdrop sizing */
-static int  gScreenW    = WIN_W;
-static int  gScreenH    = WIN_H;
-
-/* responsive state — recomputed each frame from gScreenW (see UpdateDrawFrame) */
-static bool gIsMobile   = false;  /* gScreenW < BP_MOBILE                         */
-static bool gDrawerOpen = false;  /* mobile sidebar drawer visibility            */
-static bool gRowHover   = false;  /* a table row is hovered this frame → pointer */
-static bool gIsTouch    = false;  /* touch device (web only) → HTML keyboard bridge */
-
-/* Graduation Planner: chosen target honor tier (HONOR_NONE = none picked yet)
- * and the ambition within that tier's band. Read/written by RenderPlanner(). */
-static HonorTier gPlanTarget = HONOR_NONE;
-static FlexLevel gPlanFlex   = FLEX_LOW;
-
-/* per-frame dynamic string arena */
-#define DYN_BUF_SIZE 32768
-static char gDynBuf[DYN_BUF_SIZE];
-static int  gDynPos;
-
-/* command palette state */
-static bool  gPopupOpen       = false;
-static char  gCmdBuf[256]     = {0};  /* text being typed            */
-static int   gCmdLen          = 0;
-
-/* row-edit popup state */
-static bool  gEditOpen        = false;
-static char  gEditCode[MAXSIZEID] = {0};  /* subject code being edited     */
-static char  gEditMidBuf[32]  = {0};
-static int   gEditMidLen      = 0;
-static char  gEditFinBuf[32]  = {0};
-static int   gEditFinLen      = 0;
-static int   gEditField       = 0;    /* 0 = mid, 1 = final            */
-static int   gEditRatio       = 3;    /* 1=50/50  2=40/60  3=30/70     */
-static char  gEditSubjectName[MAXSIZENAME] = {0};
-static char  gEditError[64]   = {0};  /* inline popup validation msg ("" = none) */
-static bool  gHasResult       = false;
-static float gResultShowUntil = -1.f; /* GetTime() expiry for toast  */
-
-/* command execution results (written by ExecuteCommand in cmd.h) */
-static char  gFilterDept[64]  = {0};  /* kept for compat; not used in student view */
-static char  gResultMsg[256]  = {0};  /* message shown in toast                    */
-
-/* UI scale (loaded from assets/ui.cfg) */
-static float gFontScale  = 1.8f;          /* multiplier for all font sizes         */
-static int   gTargetFPS  = 60;            /* target FPS (60–240, set in ui.cfg)    */
-
-/* name-input screen state */
-static bool  gNameInput  = true;      /* true = show name-input screen             */
-static bool  gDBReady    = false;     /* true = DB loaded, show main UI            */
-static char  gUserName[26] = {0};    /* entered username (max 25 chars + NUL)     */
-static int   gNameLen    = 0;
+/* Macro mappings to gApp members */
+#define gScreenW (gApp.screen_w)
+#define gScreenH (gApp.screen_h)
+#define gActiveNav (gApp.active_nav)
+#define gDynBuf (gApp.dyn_buf)
+#define gDynPos (gApp.dyn_pos)
+#define gPopupOpen (gApp.popup_open)
+#define gCmdBuf (gApp.cmd_buf)
+#define gCmdLen (gApp.cmd_len)
+#define gHasResult (gApp.has_result)
+#define gResultShowUntil (gApp.result_show_until)
+#define gResultMsg (gApp.result_msg)
+#define gPlayer (gApp.player)
+#define gFonts (gApp.fonts)
+#define gCustomFont (gApp.custom_font)
+#define gIsMobile (gApp.is_mobile)
+#define gDrawerOpen (gApp.drawer_open)
+#define gRowHover (gApp.row_hover)
+#define gIsTouch (gApp.is_touch)
+#define gPlanTarget (gApp.plan_target)
+#define gPlanFlex (gApp.plan_flex)
+#define gEditOpen (gApp.edit_open)
+#define gEditCode (gApp.edit_code)
+#define gEditMidBuf (gApp.edit_mid_buf)
+#define gEditMidLen (gApp.edit_mid_len)
+#define gEditFinBuf (gApp.edit_fin_buf)
+#define gEditFinLen (gApp.edit_fin_len)
+#define gEditField (gApp.edit_field)
+#define gEditRatio (gApp.edit_ratio)
+#define gEditSubjectName (gApp.edit_subject_name)
+#define gEditError (gApp.edit_error)
+#define gFontScale (gApp.font_scale)
+#define gTargetFPS (gApp.target_fps)
+#define gNameInput (gApp.name_input)
+#define gDBReady (gApp.db_ready)
+#define gUserName (gApp.user_name)
+#define gNameLen (gApp.name_len)
+#define gTypeName (gApp.type_name)
+#define gGradRules (gApp.grad_rules)
+#define gDataWarningsBuf (gApp.data_warnings_buf)
+#define gDataWarnCount (gApp.data_warn_count)
+#define gFilterDept (gApp.filter_dept)
 
 /* --- Score/player refresh helper ------------------------------------- */
 /* Calls DB_Query then recomputes graduation status + alert level.       */
-static void RefreshPlayer(void)
+void RefreshPlayer(void)
 {
     DB_Query(&gPlayer);
     update_player_status(&gPlayer);
 }
 
-/* --- Command dispatcher ----------------------------------------------- */
-#include "cmd.h"
+void ShowToastFor(float seconds)
+{
+    gHasResult       = true;
+    gResultShowUntil = (float)GetTime() + seconds;
+}
 
-/* --- UI rendering layer (sees all globals above) ---------------------- */
-#include "ui.c"
+static void ResetCommandInput(void)
+{
+    gCmdLen = 0;
+    gCmdBuf[0] = '\0';
+}
+
+void ReturnToNameInput(void)
+{
+    memset(&gPlayer, 0, sizeof(gPlayer));
+    gNameLen = 0;
+    gUserName[0] = '\0';
+    gDBReady = false;
+    gNameInput = true;
+}
+
 
 /* --- DB initializer (called when user confirms name on startup) -------- */
 static void InitPlayerDB(void)
@@ -122,8 +108,7 @@ static void InitPlayerDB(void)
     if (!DB_Open(gUserName)) {
         snprintf(gResultMsg, sizeof(gResultMsg),
                  "Error: cannot open db_%s.db", gUserName);
-        gHasResult       = true;
-        gResultShowUntil = (float)GetTime() + 5.f;
+        ShowToastFor(5.f);
         return;
     }
     DB_CreateSchema();
@@ -203,7 +188,7 @@ static void HandleKeyboard(void)
     /* Ctrl+K -- toggle palette */
     if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_K)) {
         gPopupOpen = !gPopupOpen;
-        if (!gPopupOpen) { gCmdLen = 0; gCmdBuf[0] = '\0'; }
+        if (!gPopupOpen) ResetCommandInput();
         return;
     }
 
@@ -213,19 +198,16 @@ static void HandleKeyboard(void)
     /* Escape -- dismiss */
     if (IsKeyPressed(KEY_ESCAPE)) {
         gPopupOpen = false;
-        gCmdLen    = 0;
-        gCmdBuf[0] = '\0';
+        ResetCommandInput();
         return;
     }
 
     /* Enter -- submit */
     if (IsKeyPressed(KEY_ENTER) && gCmdLen > 0) {
         ExecuteCommand(gCmdBuf, &gActiveNav, gFilterDept, gResultMsg, sizeof(gResultMsg));
-        gHasResult       = true;
-        gResultShowUntil = (float)GetTime() + 5.f;
+        ShowToastFor(5.f);
         gPopupOpen       = false;
-        gCmdLen          = 0;
-        gCmdBuf[0]       = '\0';
+        ResetCommandInput();
         return;
     }
 
@@ -293,91 +275,29 @@ static void UpdateDrawFrame(void);
 
 int main(void)
 {
+    memset(&gApp, 0, sizeof(gApp));
+    gApp.font_scale = 1.8f;
+    gApp.target_fps = 60;
+    gApp.name_input = true;
+    gApp.active_nav = 1;
+
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT);
     InitWindow(WIN_W, WIN_H, "Transcript Viewer");
     SetTargetFPS(gTargetFPS);  /* will be updated after ui.cfg loads */
 
-    /* Font loading: read paths from assets/fonts.cfg, fall back to Raylib default */
-#define MAX_FONT_ENTRIES 32
-#define MAX_FONT_PATH    512
-    static char fontPathBuf[MAX_FONT_ENTRIES][MAX_FONT_PATH];
-    const char *fontCandidates[MAX_FONT_ENTRIES + 1];
-    int numFontCandidates = 0;
+    AppConfig appConfig = AppConfig_Load("assets/ui.cfg");
+    gFontScale = appConfig.font_scale;
+    gTargetFPS = appConfig.target_fps;
 
-    FILE *fontCfg = fopen("assets/fonts.cfg", "r");
-    if (fontCfg) {
-        char line[MAX_FONT_PATH];
-        while (fgets(line, sizeof(line), fontCfg) && numFontCandidates < MAX_FONT_ENTRIES) {
-            /* strip newline */
-            int ll = (int)strlen(line);
-            while (ll > 0 && (line[ll-1] == '\n' || line[ll-1] == '\r' || line[ll-1] == ' '))
-                line[--ll] = '\0';
-            if (ll == 0 || line[0] == '#') continue;  /* blank / comment */
-            snprintf(fontPathBuf[numFontCandidates], MAX_FONT_PATH, "%s", line);
-            fontCandidates[numFontCandidates] = fontPathBuf[numFontCandidates];
-            numFontCandidates++;
-        }
-        fclose(fontCfg);
-    }
-    // if no font found: show error on screen and exit
-    if (numFontCandidates == 0) {
-        fprintf(stderr,
-            "[font] No font paths found in assets/fonts.cfg.\n"
-            "       Add at least one valid .ttf path to that file and restart.\n");
-        const char *msg1 = "No font found — cannot start.";
-        const char *msg2 = "Add a .ttf path to  assets/fonts.cfg  and restart.";
-        const char *msg3 = "Press any key or close this window to exit.";
-        SetTargetFPS(60);
-        while (!WindowShouldClose() && !GetKeyPressed()) {
-            BeginDrawing();
-            ClearBackground((Color){ 241, 237, 229, 255 });
-            DrawText(msg1, 40, 120, 28, (Color){ 178, 52, 42, 255 });
-            DrawText(msg2, 40, 165, 20, (Color){ 27, 26, 23, 255 });
-            DrawText(msg3, 40, 210, 16, (Color){ 122, 116, 104, 255 });
-            EndDrawing();
-        }
+    FontLoadResult fontLoad = AppConfig_LoadFont("assets/fonts.cfg");
+    if (!fontLoad.has_configured_candidates) {
+        AppConfig_DrawMissingFontScreen();
         CloseWindow();
         return 1;
     }
-    fontCandidates[numFontCandidates] = NULL;  /* sentinel */
-
-    gFonts[0] = (Font){0};
-    for (int i = 0; fontCandidates[i]; i++) {
-        if (FileExists(fontCandidates[i])) {
-            Font f = LoadFontEx(fontCandidates[i], 72, NULL, 250);
-            if (f.texture.id != 0) {
-                gFonts[0]   = f;
-                gCustomFont = true;
-                SetTextureFilter(gFonts[0].texture, TEXTURE_FILTER_BILINEAR);
-                break;
-            }
-        }
-    }
-    if (!gCustomFont) gFonts[0] = GetFontDefault();
-
-    /* ── UI config: load font_scale from assets/ui.cfg ─────────────── */
-    {
-        FILE *uiCfg = fopen("assets/ui.cfg", "r");
-        if (uiCfg) {
-            char line[256];
-            while (fgets(line, sizeof(line), uiCfg)) {
-                if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') continue;
-                char key[64]; float val;
-                if (sscanf(line, "%63s %f", key, &val) == 2) {
-                    if (strcmp(key, "font_scale") == 0 && val > 0.1f && val < 10.f)
-                        gFontScale = val;
-                    if (strcmp(key, "target_fps") == 0) {
-                        int fps = (int)val;
-                        if (fps < 60)  fps = 60;
-                        if (fps > 240) fps = 240;
-                        gTargetFPS = fps;
-                    }
-                }
-            }
-            fclose(uiCfg);
-        }
-        SetTargetFPS(gTargetFPS);  /* apply after ui.cfg parsed */
-    }
+    gFonts[0] = fontLoad.font;
+    gCustomFont = fontLoad.custom_font;
+    SetTargetFPS(gTargetFPS);
 
     /* ── SQLite: opened via InitPlayerDB() after user enters name ───── */
     memset(&gPlayer, 0, sizeof(gPlayer));
@@ -477,11 +397,9 @@ static void WebKbdSync(void)
         if (tv_kbd_take_enter() && gCmdLen > 0) {
             ExecuteCommand(gCmdBuf, &gActiveNav, gFilterDept,
                            gResultMsg, sizeof(gResultMsg));
-            gHasResult       = true;
-            gResultShowUntil = (float)GetTime() + 5.f;
+            ShowToastFor(5.f);
             gPopupOpen       = false;
-            gCmdLen          = 0;
-            gCmdBuf[0]       = '\0';
+            ResetCommandInput();
         }
     }
 }
@@ -523,11 +441,11 @@ static void UpdateDrawFrame(void)
                 RefreshPlayer();
                 snprintf(gResultMsg, sizeof(gResultMsg),
                          "Imported database for %s", gUserName);
-                gHasResult = true; gResultShowUntil = (float)GetTime() + 5.f;
+                ShowToastFor(5.f);
             } else if (imp == -1) {
                 snprintf(gResultMsg, sizeof(gResultMsg),
                          "Import failed or cancelled");
-                gHasResult = true; gResultShowUntil = (float)GetTime() + 5.f;
+                ShowToastFor(5.f);
             }
         }
 #else
@@ -543,7 +461,7 @@ static void UpdateDrawFrame(void)
                     snprintf(gResultMsg, sizeof(gResultMsg),
                              "Drop failed: not a valid .db");
                 }
-                gHasResult = true; gResultShowUntil = (float)GetTime() + 5.f;
+                ShowToastFor(5.f);
             }
             UnloadDroppedFiles(dropped);
         }

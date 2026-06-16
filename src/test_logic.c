@@ -24,10 +24,24 @@
 #include <string.h>
 #include <math.h>
 
-/* Pull in the same header stack as main.c (no Raylib needed here) */
-#include "app_data.h"     /* gPlayer, gTypeName, gGradRules, gDataWarnings… */
-#include "db.h"           /* gDB, DB_CreateSchema, DB_ValidateData, … */
-#include "score_logic.h"  /* all score / graduation calculation functions   */
+#include "app_data.h"
+#include "db.h"
+#include "score_logic.h"
+
+/* Define the gApp singleton instance for unit tests */
+AppContext gApp;
+
+#define gDB (gApp.db)
+#define gGradRules (gApp.grad_rules)
+#define gDataWarnCount (gApp.data_warn_count)
+#define gTypeName (gApp.type_name)
+#define gPlayer (gApp.player)
+
+/* Stub callback functions since Raylib / main.c is not linked in tests */
+void RefreshPlayer(void) {}
+void ShowToastFor(float seconds) { (void)seconds; }
+void ReturnToNameInput(void) {}
+
 
 /* ══════════════════════════════════════════════════════════════════════
  * Tiny test framework
