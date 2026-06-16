@@ -251,10 +251,11 @@ static void RenderSidebar(void)
             .backgroundColor = C_BORDER,
         }) {}
 
-#if defined(PLATFORM_WEB)
         /* ── DB export / import ──────────────────────────────────────────
-         * The web build keeps the database inside this browser. These let the
-         * user save a portable .db file or load one (e.g. to move devices). */
+         * Save a portable copy of the transcript .db or load one (e.g. to move
+         * between devices). Web: browser download / file picker. Desktop: a
+         * native file dialog (zenity/kdialog), or drag-and-drop a .db onto the
+         * window to import. */
         CLAY(CLAY_ID("DBIO"), {
             .layout = {
                 .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(32) },
@@ -275,9 +276,17 @@ static void RenderSidebar(void)
                                      .width = { .left=1,.right=1,.top=1,.bottom=1 } },
             }) {
                 if (gDBReady && Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+#if defined(PLATFORM_WEB)
                     DB_ExportDownload(gUserName);
                     snprintf(gResultMsg, sizeof(gResultMsg),
                              "Downloading db_%s.db", gUserName);
+#else
+                    char dest[1024];
+                    int rc = DB_ExportFile(gUserName, dest, sizeof dest);
+                    if (rc == 1)       snprintf(gResultMsg, sizeof(gResultMsg), "Exported to %.220s", dest);
+                    else if (rc == -1) snprintf(gResultMsg, sizeof(gResultMsg), "Export cancelled");
+                    else               snprintf(gResultMsg, sizeof(gResultMsg), "Export failed");
+#endif
                     gHasResult       = true;
                     gResultShowUntil = (float)GetTime() + 4.f;
                 }
@@ -294,12 +303,31 @@ static void RenderSidebar(void)
                 .border          = { .color = C_BORDER,
                                      .width = { .left=1,.right=1,.top=1,.bottom=1 } },
             }) {
-                if (gDBReady && Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
+                if (gDBReady && Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+#if defined(PLATFORM_WEB)
                     DB_ImportPick(gUserName);
+#else
+                    char src[1024];
+                    if (DB_PickOpenPath(src, sizeof src)) {
+                        if (DB_ImportFile(gUserName, src)) {
+                            RefreshPlayer();
+                            snprintf(gResultMsg, sizeof(gResultMsg), "Imported %.220s", src);
+                        } else {
+                            snprintf(gResultMsg, sizeof(gResultMsg), "Import failed: not a valid .db");
+                        }
+                    } else if (tv_have("zenity") || tv_have("kdialog")) {
+                        snprintf(gResultMsg, sizeof(gResultMsg), "Import cancelled");
+                    } else {
+                        snprintf(gResultMsg, sizeof(gResultMsg),
+                                 "No file dialog found - drag a .db onto the window");
+                    }
+                    gHasResult       = true;
+                    gResultShowUntil = (float)GetTime() + 4.f;
+#endif
+                }
                 CLAY_TEXT(CLAY_STRING("Import .db"), TC(C_TEXT, 10));
             }
         }
-#endif
 
         /* user card */
         CLAY(CLAY_ID("UserCard"), {

@@ -530,6 +530,23 @@ static void UpdateDrawFrame(void)
                 gHasResult = true; gResultShowUntil = (float)GetTime() + 5.f;
             }
         }
+#else
+        /* Desktop: drag-and-drop a .db file onto the window to import it. */
+        if (gDBReady && IsFileDropped()) {
+            FilePathList dropped = LoadDroppedFiles();
+            if (dropped.count > 0) {
+                if (DB_ImportFile(gUserName, dropped.paths[0])) {
+                    RefreshPlayer();
+                    snprintf(gResultMsg, sizeof(gResultMsg),
+                             "Imported %s", GetFileName(dropped.paths[0]));
+                } else {
+                    snprintf(gResultMsg, sizeof(gResultMsg),
+                             "Drop failed: not a valid .db");
+                }
+                gHasResult = true; gResultShowUntil = (float)GetTime() + 5.f;
+            }
+            UnloadDroppedFiles(dropped);
+        }
 #endif
 
         /* expire toast */
