@@ -8,3 +8,11 @@ sqlite3.c
 sqlite3.h
 sqlite3.o
 sqlite3.web.o
+sqlite3.pkg.o
+
+# Packaging artifacts (make linux-package / make linux-appimage)
+/transcript-viewer-linux
+/transcript-viewer-linux.zip
+/AppDir
+/appimagetool-x86_64.AppImage
+*.AppImage
