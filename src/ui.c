@@ -2235,6 +2235,84 @@ void RenderPlanner(void)
                          nItems), TC(C_SUBTEXT, 9));
         }
 
+        /* ── Global Sandbox Control Card ── */
+        if (nItems > 0) {
+            CLAY(CLAY_ID("SandboxControlCard"), {
+                .layout = {
+                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                    .padding         = { 16, 16, 14, 14 },
+                    .childGap        = SP_MD,
+                    .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                },
+                .backgroundColor = C_CARD,
+                .cornerRadius    = CLAY_CORNER_RADIUS(6),
+                .border          = { .color = C_BORDER, .width = { .left = 3, .top = 1, .right = 1, .bottom = 1 } },
+            }) {
+                CLAY(CLAY_ID("SandboxCtrlHeader"), {
+                    .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                                .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
+                }) {
+                    CLAY_TEXT(CLAY_STRING("Sandbox Quick Simulator"), TC(C_TEXT, 12));
+                    CLAY(CLAY_ID("SandboxFlexSpacer"), { .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) } } }) {}
+                    
+                    /* Reset Sandbox Button */
+                    if (gApp.sandbox_override_count > 0) {
+                        CLAY(CLAY_ID("SandboxResetBtn"), {
+                            .layout = {
+                                .sizing  = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(24) },
+                                .padding = { 10, 10, 0, 0 },
+                                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                            },
+                            .backgroundColor = Clay_Hovered() ? C_RED : C_RED_BG,
+                            .cornerRadius    = CLAY_CORNER_RADIUS(4),
+                        }) {
+                            if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                                gApp.sandbox_override_count = 0;
+                            }
+                            CLAY_TEXT(CLAY_STRING("Reset Sandbox"), TC(Clay_Hovered() ? C_WHITE : C_RED, 9));
+                        }
+                    }
+                }
+                
+                /* Presets Row */
+                CLAY(CLAY_ID("SandboxPresetsRow"), {
+                    .layout = {
+                        .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                        .childGap        = SP_SM,
+                        .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                        .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                    },
+                }) {
+                    CLAY_TEXT(CLAY_STRING("Set all remaining to:"), TC(C_SUBTEXT, 10));
+                    
+                    static const char *kPresetLetters[] = { "A", "B+", "B", "C+", "C", "D+", "D", "F" };
+                    for (int p = 0; p < 8; p++) {
+                        CLAY(CLAY_IDI("SandboxPresetBtn", p), {
+                            .layout = {
+                                .sizing  = { CLAY_SIZING_FIXED(30), CLAY_SIZING_FIXED(24) },
+                                .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+                            },
+                            .backgroundColor = Clay_Hovered() ? C_ACCENT : C_TBL_HDR,
+                            .cornerRadius    = CLAY_CORNER_RADIUS(4),
+                            .border          = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+                        }) {
+                            if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                                char letter = kPresetLetters[p][0];
+                                int plus = (kPresetLetters[p][1] == '+') ? 1 : 0;
+                                
+                                gApp.sandbox_override_count = 0;
+                                for (int idx = 0; idx < nItems; idx++) {
+                                    SetSandboxOverride(items[idx].node->ID, letter, plus);
+                                }
+                            }
+                            CLAY_TEXT(CS(kPresetLetters[p]), TC(Clay_Hovered() ? C_WHITE : C_TEXT, 10));
+                        }
+                    }
+                }
+            }
+        }
+
         if (nItems == 0) {
             CLAY(CLAY_ID("PlanEmpty"), {
                 .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
@@ -2258,6 +2336,19 @@ void RenderPlanner(void)
             bool sport   = (gGradRules[ty].mode == GRAD_SUBJECT_COUNT);
             bool impact  = !sport && n->credit >= 3;
 
+            SandboxOverride *ov = GetSandboxOverride(n->ID);
+            bool isSimulated = (ov && ov->grade_letter != 0);
+
+            Clay_Color border_color = C_BORDER;
+            int border_left_w = 0;
+            if (isSimulated) {
+                border_color = C_ACCENT;
+                border_left_w = 4;
+            } else if (failed) {
+                border_color = C_RED;
+                border_left_w = 3;
+            }
+
             CLAY(CLAY_IDI("PlanRow", i), {
                 .layout = {
                     .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(ROW_H) },
@@ -2266,9 +2357,9 @@ void RenderPlanner(void)
                     .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
                     .layoutDirection = CLAY_LEFT_TO_RIGHT,
                 },
-                .backgroundColor = isOdd ? C_ROW_ODD : C_ROW_EVEN,
-                .border = { .color = failed ? C_RED : C_BORDER,
-                            .width = { .left = failed ? 3 : 0, .bottom = 1 } },
+                .backgroundColor = isSimulated ? C_ACCENT_BG : (isOdd ? C_ROW_ODD : C_ROW_EVEN),
+                .border = { .color = border_color,
+                            .width = { .left = border_left_w, .bottom = 1 } },
             }) {
                 /* recommended term (desktop only) */
                 if (!gIsMobile)
