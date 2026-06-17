@@ -1769,26 +1769,39 @@ static SandboxOverride *GetSandboxOverride(const char *subject_id)
     return NULL;
 }
 
-static void SetSandboxOverride(const char *subject_id, char letter, int plus)
+static SandboxOverride *GetDraftSandboxOverride(const char *subject_id)
 {
-    SandboxOverride *opt = GetSandboxOverride(subject_id);
+    for (int i = 0; i < gApp.draft_override_count; i++) {
+        if (strcmp(gApp.draft_overrides[i].subject_id, subject_id) == 0) {
+            return &gApp.draft_overrides[i];
+        }
+    }
+    return NULL;
+}
+
+static void SetDraftSandboxOverride(const char *subject_id, char letter, int plus)
+{
+    SandboxOverride *opt = GetDraftSandboxOverride(subject_id);
     if (opt) {
         if (letter == 0) {
-            int idx = (int)(opt - gApp.sandbox_overrides);
-            gApp.sandbox_overrides[idx] = gApp.sandbox_overrides[gApp.sandbox_override_count - 1];
-            gApp.sandbox_override_count--;
+            int idx = (int)(opt - gApp.draft_overrides);
+            gApp.draft_overrides[idx] = gApp.draft_overrides[gApp.draft_override_count - 1];
+            gApp.draft_override_count--;
         } else {
-            opt->grade_letter = letter;
-            opt->plus = plus;
+            if (opt->grade_letter != letter || opt->plus != plus) {
+                opt->grade_letter = letter;
+                opt->plus = plus;
+            }
         }
     } else if (letter != 0) {
-        if (gApp.sandbox_override_count < 128) {
-            SandboxOverride *new_opt = &gApp.sandbox_overrides[gApp.sandbox_override_count++];
+        if (gApp.draft_override_count < 128) {
+            SandboxOverride *new_opt = &gApp.draft_overrides[gApp.draft_override_count++];
             snprintf(new_opt->subject_id, sizeof(new_opt->subject_id), "%s", subject_id);
             new_opt->grade_letter = letter;
             new_opt->plus = plus;
         }
     }
+    gApp.sandbox_dirty = true;
 }
 
 static float calc_cpa_sandbox(Player *p, int pass_only)
@@ -1892,7 +1905,7 @@ static HonorProjection honor_project_sandbox(Player *p)
 static void RenderSandboxGradeStepper(int uid, const char *subject_id)
 {
     int idx = 0;
-    SandboxOverride *ov = GetSandboxOverride(subject_id);
+    SandboxOverride *ov = GetDraftSandboxOverride(subject_id);
     if (ov && ov->grade_letter != 0) {
         if (ov->grade_letter == 'F') idx = 1;
         else if (ov->grade_letter == 'D' && !ov->plus) idx = 2;
@@ -1972,7 +1985,7 @@ static void RenderSandboxGradeStepper(int uid, const char *subject_id)
 
             if (new_idx != idx) {
                 if (new_idx == 0) {
-                    SetSandboxOverride(subject_id, 0, 0);
+                    SetDraftSandboxOverride(subject_id, 0, 0);
                 } else {
                     char letter = 'F';
                     int plus = 0;
@@ -1985,7 +1998,7 @@ static void RenderSandboxGradeStepper(int uid, const char *subject_id)
                     else if (new_idx == 7) { letter = 'B'; plus = 1; }
                     else if (new_idx == 8) { letter = 'A'; plus = 0; }
                     else if (new_idx == 9) { letter = 'A'; plus = 1; }
-                    SetSandboxOverride(subject_id, letter, plus);
+                    SetDraftSandboxOverride(subject_id, letter, plus);
                 }
             }
         }
@@ -2082,6 +2095,15 @@ void RenderPlanner(void)
                         .cornerRadius    = CLAY_CORNER_RADIUS(3),
                     }) {
                         CLAY_TEXT(CLAY_STRING("SANDBOX ACTIVE (SIMULATED)"), TC(C_ACCENT, 8));
+                    }
+                }
+                if (gApp.sandbox_dirty) {
+                    CLAY(CLAY_ID("PlanSandboxDirtyBadge"), {
+                        .layout = { .padding = { 6, 6, 2, 2 } },
+                        .backgroundColor = C_YELLOW_BG,
+                        .cornerRadius    = CLAY_CORNER_RADIUS(3),
+                    }) {
+                        CLAY_TEXT(CLAY_STRING("PENDING CHANGES"), TC(C_YELLOW, 8));
                     }
                 }
             }
@@ -2259,7 +2281,7 @@ void RenderPlanner(void)
                     CLAY(CLAY_ID("SandboxFlexSpacer"), { .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) } } }) {}
                     
                     /* Reset Sandbox Button */
-                    if (gApp.sandbox_override_count > 0) {
+                    if (gApp.sandbox_override_count > 0 || gApp.draft_override_count > 0) {
                         CLAY(CLAY_ID("SandboxResetBtn"), {
                             .layout = {
                                 .sizing  = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(24) },
@@ -2270,7 +2292,8 @@ void RenderPlanner(void)
                             .cornerRadius    = CLAY_CORNER_RADIUS(4),
                         }) {
                             if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
-                                gApp.sandbox_override_count = 0;
+                                gApp.draft_override_count = 0;
+                                gApp.sandbox_dirty = true;
                             }
                             CLAY_TEXT(CLAY_STRING("Reset Sandbox"), TC(Clay_Hovered() ? C_WHITE : C_RED, 9));
                         }
@@ -2303,12 +2326,67 @@ void RenderPlanner(void)
                                 char letter = kPresetLetters[p][0];
                                 int plus = (kPresetLetters[p][1] == '+') ? 1 : 0;
                                 
-                                gApp.sandbox_override_count = 0;
+                                gApp.draft_override_count = 0;
                                 for (int idx = 0; idx < nItems; idx++) {
-                                    SetSandboxOverride(items[idx].node->ID, letter, plus);
+                                    SetDraftSandboxOverride(items[idx].node->ID, letter, plus);
                                 }
                             }
                             CLAY_TEXT(CS(kPresetLetters[p]), TC(Clay_Hovered() ? C_WHITE : C_TEXT, 10));
+                        }
+                    }
+                }
+
+                /* Dirty Actions Row */
+                if (gApp.sandbox_dirty) {
+                    CLAY(CLAY_ID("SandboxDirtyActions"), {
+                        .layout = {
+                            .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                            .padding         = { 8, 8, 8, 8 },
+                            .childGap        = SP_MD,
+                            .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                            .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                        },
+                        .backgroundColor = C_YELLOW_BG,
+                        .cornerRadius    = CLAY_CORNER_RADIUS(4),
+                        .border          = { .color = C_YELLOW, .width = { .left = 1, .top = 1, .right = 1, .bottom = 1 } },
+                    }) {
+                        CLAY_TEXT(CLAY_STRING("Pending changes:"), TC(C_TEXT, 10));
+                        CLAY(CLAY_ID("SandboxFlexSpacer2"), { .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) } } }) {}
+
+                        /* Apply & Recalculate Button */
+                        CLAY(CLAY_ID("SandboxApplyBtn"), {
+                            .layout = {
+                                .sizing  = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(24) },
+                                .padding = { 10, 10, 0, 0 },
+                                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                            },
+                            .backgroundColor = Clay_Hovered() ? C_GREEN : C_GREEN_BG,
+                            .cornerRadius    = CLAY_CORNER_RADIUS(4),
+                        }) {
+                            if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                                memcpy(gApp.sandbox_overrides, gApp.draft_overrides, sizeof(gApp.draft_overrides));
+                                gApp.sandbox_override_count = gApp.draft_override_count;
+                                gApp.sandbox_dirty = false;
+                            }
+                            CLAY_TEXT(CLAY_STRING("Apply & Recalculate"), TC(Clay_Hovered() ? C_WHITE : C_GREEN, 10));
+                        }
+
+                        /* Discard Button */
+                        CLAY(CLAY_ID("SandboxDiscardBtn"), {
+                            .layout = {
+                                .sizing  = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(24) },
+                                .padding = { 10, 10, 0, 0 },
+                                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                            },
+                            .backgroundColor = Clay_Hovered() ? C_RED : C_RED_BG,
+                            .cornerRadius    = CLAY_CORNER_RADIUS(4),
+                        }) {
+                            if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                                memcpy(gApp.draft_overrides, gApp.sandbox_overrides, sizeof(gApp.sandbox_overrides));
+                                gApp.draft_override_count = gApp.sandbox_override_count;
+                                gApp.sandbox_dirty = false;
+                            }
+                            CLAY_TEXT(CLAY_STRING("Discard"), TC(Clay_Hovered() ? C_WHITE : C_RED, 10));
                         }
                     }
                 }
@@ -2338,7 +2416,7 @@ void RenderPlanner(void)
             bool sport   = (gGradRules[ty].mode == GRAD_SUBJECT_COUNT);
             bool impact  = !sport && n->credit >= 3;
 
-            SandboxOverride *ov = GetSandboxOverride(n->ID);
+            SandboxOverride *ov = GetDraftSandboxOverride(n->ID);
             bool isSimulated = (ov && ov->grade_letter != 0);
 
             Clay_Color border_color = C_BORDER;

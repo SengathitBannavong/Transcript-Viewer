@@ -97,6 +97,8 @@ void ReturnToNameInput(void)
     gDBReady = false;
     gNameInput = true;
     gApp.sandbox_override_count = 0;
+    gApp.draft_override_count = 0;
+    gApp.sandbox_dirty = false;
 }
 
 

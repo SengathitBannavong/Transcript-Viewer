@@ -105,6 +105,9 @@ typedef struct AppContext {
     /* 11. Target CPA Sandbox State */
     SandboxOverride sandbox_overrides[128];
     int sandbox_override_count;
+    SandboxOverride draft_overrides[128];
+    int draft_override_count;
+    bool sandbox_dirty;
 } AppContext;
 
 /* Global Singleton Instance */
