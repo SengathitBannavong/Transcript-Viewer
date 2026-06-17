@@ -1901,7 +1901,8 @@ static void RenderSandboxGradeStepper(int uid, const char *subject_id)
         else if (ov->grade_letter == 'C' && ov->plus) idx = 5;
         else if (ov->grade_letter == 'B' && !ov->plus) idx = 6;
         else if (ov->grade_letter == 'B' && ov->plus) idx = 7;
-        else if (ov->grade_letter == 'A') idx = 8;
+        else if (ov->grade_letter == 'A' && !ov->plus) idx = 8;
+        else if (ov->grade_letter == 'A' && ov->plus) idx = 9;
     }
 
     CLAY(CLAY_IDI("SandboxStep", uid), {
@@ -1925,16 +1926,16 @@ static void RenderSandboxGradeStepper(int uid, const char *subject_id)
             CLAY_TEXT(CLAY_STRING("-"), TC(Clay_Hovered() ? C_WHITE : C_ACCENT, 11));
         }
 
-        char val_buf[8];
-        if (idx == 0) strcpy(val_buf, "-");
-        else if (idx == 1) strcpy(val_buf, "F");
-        else if (idx == 2) strcpy(val_buf, "D");
-        else if (idx == 3) strcpy(val_buf, "D+");
-        else if (idx == 4) strcpy(val_buf, "C");
-        else if (idx == 5) strcpy(val_buf, "C+");
-        else if (idx == 6) strcpy(val_buf, "B");
-        else if (idx == 7) strcpy(val_buf, "B+");
-        else if (idx == 8) strcpy(val_buf, "A");
+        Clay_String val_str = CLAY_STRING("-");
+        if (idx == 1) val_str = CLAY_STRING("F");
+        else if (idx == 2) val_str = CLAY_STRING("D");
+        else if (idx == 3) val_str = CLAY_STRING("D+");
+        else if (idx == 4) val_str = CLAY_STRING("C");
+        else if (idx == 5) val_str = CLAY_STRING("C+");
+        else if (idx == 6) val_str = CLAY_STRING("B");
+        else if (idx == 7) val_str = CLAY_STRING("B+");
+        else if (idx == 8) val_str = CLAY_STRING("A");
+        else if (idx == 9) val_str = CLAY_STRING("A+");
 
         CLAY(CLAY_IDI("SandValBox", uid), {
             .layout = {
@@ -1945,7 +1946,7 @@ static void RenderSandboxGradeStepper(int uid, const char *subject_id)
             .cornerRadius    = CLAY_CORNER_RADIUS(4),
             .border          = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } },
         }) {
-            CLAY_TEXT(CS(val_buf), TC((idx > 0) ? C_ACCENT : C_SUBTEXT, 10));
+            CLAY_TEXT(val_str, TC((idx > 0) ? C_ACCENT : C_SUBTEXT, 10));
         }
 
         bool inc_clicked = false;
@@ -1967,7 +1968,7 @@ static void RenderSandboxGradeStepper(int uid, const char *subject_id)
             if (dec_clicked) new_idx--;
             if (inc_clicked) new_idx++;
             if (new_idx < 0) new_idx = 0;
-            if (new_idx > 8) new_idx = 8;
+            if (new_idx > 9) new_idx = 9;
 
             if (new_idx != idx) {
                 if (new_idx == 0) {
@@ -1983,6 +1984,7 @@ static void RenderSandboxGradeStepper(int uid, const char *subject_id)
                     else if (new_idx == 6) { letter = 'B'; plus = 0; }
                     else if (new_idx == 7) { letter = 'B'; plus = 1; }
                     else if (new_idx == 8) { letter = 'A'; plus = 0; }
+                    else if (new_idx == 9) { letter = 'A'; plus = 1; }
                     SetSandboxOverride(subject_id, letter, plus);
                 }
             }
@@ -2286,8 +2288,8 @@ void RenderPlanner(void)
                 }) {
                     CLAY_TEXT(CLAY_STRING("Set all remaining to:"), TC(C_SUBTEXT, 10));
                     
-                    static const char *kPresetLetters[] = { "A", "B+", "B", "C+", "C", "D+", "D", "F" };
-                    for (int p = 0; p < 8; p++) {
+                    static const char *kPresetLetters[] = { "A+", "A", "B+", "B", "C+", "C", "D+", "D", "F" };
+                    for (int p = 0; p < 9; p++) {
                         CLAY(CLAY_IDI("SandboxPresetBtn", p), {
                             .layout = {
                                 .sizing  = { CLAY_SIZING_FIXED(30), CLAY_SIZING_FIXED(24) },
