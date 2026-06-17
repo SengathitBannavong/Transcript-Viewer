@@ -96,6 +96,7 @@ void ReturnToNameInput(void)
     gUserName[0] = '\0';
     gDBReady = false;
     gNameInput = true;
+    gApp.sandbox_override_count = 0;
 }
 
 
@@ -185,6 +186,24 @@ static void HandleKeyboard(void)
         return;
     }
 
+    /* Portal Import popup handler */
+    if (gApp.import_open) {
+        if (IsKeyPressed(KEY_ESCAPE)) {
+            gApp.import_open = false;
+            return;
+        }
+        if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_V)) {
+            const char *clipText = GetClipboardText();
+            if (clipText) {
+                strncpy(gApp.import_buf, clipText, sizeof(gApp.import_buf) - 1);
+                gApp.import_buf[sizeof(gApp.import_buf) - 1] = '\0';
+                gApp.import_len = (int)strlen(gApp.import_buf);
+            }
+            return;
+        }
+        return;
+    }
+
     /* Ctrl+K -- toggle palette */
     if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_K)) {
         gPopupOpen = !gPopupOpen;
@@ -259,6 +278,7 @@ static void BuildLayout(void)
         if (gIsMobile && gDrawerOpen) RenderDrawer();
         if (gEditOpen)   RenderEditPopup();
         if (gPopupOpen)  RenderCommandPopup();
+        if (gApp.import_open) RenderImportPopup();
         if (gHasResult)  RenderResultToast();
     }
 }
@@ -290,6 +310,7 @@ int main(void)
     AppConfig appConfig = AppConfig_Load("assets/ui.cfg");
     gFontScale = appConfig.font_scale;
     gTargetFPS = appConfig.target_fps;
+    gApp.theme_id = appConfig.theme_id;
 
     FontLoadResult fontLoad = AppConfig_LoadFont("assets/fonts.cfg");
     if (!fontLoad.has_configured_candidates) {

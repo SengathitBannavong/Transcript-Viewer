@@ -772,6 +772,20 @@ int DB_SubjectExists(const char *code)
     return n>0;
 }
 
+int DB_GetSubjectCredits(const char *code)
+{
+    if(!gDB||!code) return 0;
+    sqlite3_stmt *stmt=NULL;
+    sqlite3_prepare_v2(gDB,
+        "SELECT credit FROM subjects WHERE code=?;",
+        -1, &stmt, NULL);
+    sqlite3_bind_text(stmt,1,code,-1,SQLITE_TRANSIENT);
+    int c=0;
+    if(sqlite3_step(stmt)==SQLITE_ROW) c=sqlite3_column_int(stmt,0);
+    sqlite3_finalize(stmt);
+    return c;
+}
+
 /* ─────────────────────────────────────────────────────────────────────
  * DB_Close
  * ───────────────────────────────────────────────────────────────────── */

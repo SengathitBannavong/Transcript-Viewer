@@ -11,6 +11,7 @@ AppConfig AppConfig_Default(void)
     return (AppConfig){
         .font_scale = 1.8f,
         .target_fps = 60,
+        .theme_id = 0,
     };
 }
 
@@ -35,6 +36,10 @@ AppConfig AppConfig_Load(const char *path)
             if (fps < 60) fps = 60;
             if (fps > 240) fps = 240;
             config.target_fps = fps;
+        } else if (strcmp(key, "theme_id") == 0) {
+            int tid = (int)val;
+            if (tid < 0 || tid > 2) tid = 0;
+            config.theme_id = tid;
         }
     }
 
@@ -115,7 +120,7 @@ void AppConfig_DrawMissingFontScreen(void)
     }
 }
 
-bool AppConfig_Save(const char *path, float font_scale, int target_fps)
+bool AppConfig_Save(const char *path, float font_scale, int target_fps, int theme_id)
 {
     FILE *f = fopen(path, "r");
     char *lines[100];
@@ -131,6 +136,7 @@ bool AppConfig_Save(const char *path, float font_scale, int target_fps)
         lines[line_count++] = strdup("# ui.cfg\n");
         lines[line_count++] = strdup("font_scale 1.8\n");
         lines[line_count++] = strdup("target_fps 60\n");
+        lines[line_count++] = strdup("theme_id 0\n");
     }
 
     FILE *out = fopen(path, "w");
@@ -139,6 +145,7 @@ bool AppConfig_Save(const char *path, float font_scale, int target_fps)
         return false;
     }
 
+    bool wrote_theme = false;
     for (int i = 0; i < line_count; i++) {
         int start = 0;
         while (lines[i][start] == ' ' || lines[i][start] == '\t') start++;
@@ -157,11 +164,19 @@ bool AppConfig_Save(const char *path, float font_scale, int target_fps)
                     fprintf(out, "target_fps %d\n", target_fps);
                     free(lines[i]);
                     continue;
+                } else if (strcmp(key, "theme_id") == 0) {
+                    fprintf(out, "theme_id %d\n", theme_id);
+                    wrote_theme = true;
+                    free(lines[i]);
+                    continue;
                 }
             }
         }
         fprintf(out, "%s", lines[i]);
         free(lines[i]);
+    }
+    if (!wrote_theme) {
+        fprintf(out, "theme_id %d\n", theme_id);
     }
     fclose(out);
     return true;

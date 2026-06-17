@@ -25,6 +25,7 @@ int DB_UpdateScore(const char *code, float mid, float final_);
 int DB_UpdateScoreRatio(const char *code, float mid, float final_, int ratio_sel);
 int DB_ClearScore(const char *code);
 int DB_SubjectExists(const char *code);
+int DB_GetSubjectCredits(const char *code);
 int DB_UpdateGradRule(int type_id, int mode, int limit_val, int group_id);
 int DB_SaveGradConfig(const char *path);
 void DB_Close(void);

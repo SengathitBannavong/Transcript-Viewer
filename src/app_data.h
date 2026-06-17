@@ -27,11 +27,18 @@ typedef enum {
     HONOR_GOD = 4
 } HonorTier;
 
+typedef struct {
+    char subject_id[MAXSIZEID];
+    char grade_letter; /* 'A', 'B', 'C', 'D', 'F', or 0 for unselected */
+    int plus;          /* 0 or 1 */
+} SandboxOverride;
+
 /* Unified App Context (Singleton Pattern) */
 typedef struct AppContext {
     /* 1. Global Configurations */
     float font_scale;
     int   target_fps;
+    int   theme_id;
     bool  custom_font;
     Font  fonts[1];
 
@@ -89,6 +96,15 @@ typedef struct AppContext {
     /* 9. Per-Frame Temporary Dynamic Buffer Arena */
     char dyn_buf[DYN_BUF_SIZE];
     int  dyn_pos;
+
+    /* 10. Portal Copy-Paste Import State */
+    bool import_open;
+    char import_buf[8192];
+    int  import_len;
+
+    /* 11. Target CPA Sandbox State */
+    SandboxOverride sandbox_overrides[128];
+    int sandbox_override_count;
 } AppContext;
 
 /* Global Singleton Instance */

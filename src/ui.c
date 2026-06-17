@@ -11,6 +11,86 @@
 #include "ui_strings.h"
 #include "app_config.h"
 
+AppTheme gTheme;
+
+static const AppTheme kThemePresets[3] = {
+    /* 0: Academic Paper (Warm Light) */
+    {
+        .bg         = {241, 237, 229, 255},
+        .sidebar    = {234, 229, 219, 255},
+        .card       = {250, 248, 243, 255},
+        .tbl_hdr    = {236, 231, 221, 255},
+        .row_odd    = {247, 244, 238, 255},
+        .row_even   = {252, 250, 246, 255},
+        .row_hover  = {244, 230, 227, 255},
+        .border     = {221, 214, 201, 255},
+        .accent     = {140,  47,  42, 255},
+        .accent_dim = {176,  92,  86, 255},
+        .accent_bg  = {243, 228, 225, 255},
+        .text       = { 27,  26,  23, 255},
+        .subtext    = {122, 116, 104, 255},
+        .white      = {250, 248, 244, 255},
+        .green      = { 47, 120,  75, 255},
+        .green_bg   = {222, 236, 224, 255},
+        .red        = {178,  52,  42, 255},
+        .red_bg     = {246, 225, 221, 255},
+        .yellow     = {166, 124,  36, 255},
+        .yellow_bg  = {245, 236, 212, 255}
+    },
+    /* 1: Midnight Slate (Dark Mode) */
+    {
+        .bg         = { 20,  24,  33, 255},
+        .sidebar    = { 15,  18,  25, 255},
+        .card       = { 28,  34,  46, 255},
+        .tbl_hdr    = { 35,  42,  56, 255},
+        .row_odd    = { 25,  30,  42, 255},
+        .row_even   = { 28,  34,  46, 255},
+        .row_hover  = { 42,  52,  70, 255},
+        .border     = { 45,  54,  72, 255},
+        .accent     = { 79, 140, 243, 255},
+        .accent_dim = {100, 160, 255, 255},
+        .accent_bg  = { 35,  56,  90, 255},
+        .text       = {235, 240, 250, 255},
+        .subtext    = {140, 150, 170, 255},
+        .white      = {255, 255, 255, 255},
+        .green      = { 60, 179, 113, 255},
+        .green_bg   = { 24,  55,  38, 255},
+        .red        = {239,  83,  80, 255},
+        .red_bg     = { 62,  24,  24, 255},
+        .yellow     = {255, 202,  40, 255},
+        .yellow_bg  = { 60,  50,  20, 255}
+    },
+    /* 2: Nordic Forest (Teal/Sage) */
+    {
+        .bg         = {235, 242, 238, 255},
+        .sidebar    = {222, 232, 226, 255},
+        .card       = {245, 249, 247, 255},
+        .tbl_hdr    = {228, 238, 232, 255},
+        .row_odd    = {240, 246, 243, 255},
+        .row_even   = {245, 249, 247, 255},
+        .row_hover  = {210, 228, 218, 255},
+        .border     = {200, 215, 207, 255},
+        .accent     = { 47, 102,  85, 255},
+        .accent_dim = { 65, 128, 110, 255},
+        .accent_bg  = {218, 235, 227, 255},
+        .text       = { 25,  38,  34, 255},
+        .subtext    = {110, 128, 120, 255},
+        .white      = {250, 253, 251, 255},
+        .green      = { 47, 120,  75, 255},
+        .green_bg   = {222, 236, 224, 255},
+        .red        = {178,  52,  42, 255},
+        .red_bg     = {246, 225, 221, 255},
+        .yellow     = {166, 124,  36, 255},
+        .yellow_bg  = {245, 236, 212, 255}
+    }
+};
+
+void Theme_Apply(int theme_id)
+{
+    if (theme_id < 0 || theme_id >= 3) theme_id = 0;
+    gTheme = kThemePresets[theme_id];
+}
+
 #define gScreenW (gApp.screen_w)
 #define gScreenH (gApp.screen_h)
 #define gActiveNav (gApp.active_nav)
@@ -1679,9 +1759,240 @@ static bool plan_type_open(int t, const int *chosen)
     return (int)st->count_passCredit < _sl_resolve_limit(&gPlayer, t);
 }
 
+static SandboxOverride *GetSandboxOverride(const char *subject_id)
+{
+    for (int i = 0; i < gApp.sandbox_override_count; i++) {
+        if (strcmp(gApp.sandbox_overrides[i].subject_id, subject_id) == 0) {
+            return &gApp.sandbox_overrides[i];
+        }
+    }
+    return NULL;
+}
+
+static void SetSandboxOverride(const char *subject_id, char letter, int plus)
+{
+    SandboxOverride *opt = GetSandboxOverride(subject_id);
+    if (opt) {
+        if (letter == 0) {
+            int idx = (int)(opt - gApp.sandbox_overrides);
+            gApp.sandbox_overrides[idx] = gApp.sandbox_overrides[gApp.sandbox_override_count - 1];
+            gApp.sandbox_override_count--;
+        } else {
+            opt->grade_letter = letter;
+            opt->plus = plus;
+        }
+    } else if (letter != 0) {
+        if (gApp.sandbox_override_count < 128) {
+            SandboxOverride *new_opt = &gApp.sandbox_overrides[gApp.sandbox_override_count++];
+            snprintf(new_opt->subject_id, sizeof(new_opt->subject_id), "%s", subject_id);
+            new_opt->grade_letter = letter;
+            new_opt->plus = plus;
+        }
+    }
+}
+
+static float calc_cpa_sandbox(Player *p, int pass_only)
+{
+    float total   = 0.0f;
+    int   credits = 0;
+    for (int i = 0; i < sizeSubjectType; i++) {
+        Subject_Node *cur = p->numofSubjectType[i].head;
+        while (cur) {
+            SandboxOverride *ov = GetSandboxOverride(cur->ID);
+            int use = 0;
+            char letter = cur->score_letter;
+            int plus = (cur->status_ever_been_study & 2) != 0;
+            if (ov && ov->grade_letter != 0) {
+                int is_pass = (ov->grade_letter != 'F');
+                use = pass_only ? is_pass : 1;
+                letter = ov->grade_letter;
+                plus = ov->plus;
+            } else {
+                use = pass_only ? (int)cur->status_pass
+                                : (int)(cur->status_ever_been_study & 1);
+            }
+            if (use) {
+                total   += score_to_gpa(letter, plus) * (float)cur->credit;
+                credits += (int)cur->credit;
+            }
+            cur = cur->next;
+        }
+    }
+    return (credits == 0) ? 0.0f : total / (float)credits;
+}
+
+static int calc_pass_credits_type_sandbox(Player *p, int t)
+{
+    if (t < 0 || t >= sizeSubjectType) return 0;
+    int credits = 0;
+    Subject_Node *cur = p->numofSubjectType[t].head;
+    while (cur) {
+        SandboxOverride *ov = GetSandboxOverride(cur->ID);
+        int is_pass = 0;
+        if (ov && ov->grade_letter != 0) {
+            is_pass = (ov->grade_letter != 'F');
+        } else {
+            is_pass = (int)cur->status_pass;
+        }
+        if (is_pass) {
+            credits += (int)cur->credit;
+        }
+        cur = cur->next;
+    }
+    return credits;
+}
+
+static int calc_effective_credits_sandbox(Player *p)
+{
+    int count = 0;
+    int done[sizeSubjectType];
+    for (int k = 0; k < sizeSubjectType; k++) done[k] = 0;
+    for (int i = 0; i < sizeSubjectType; i++) {
+        if (done[i]) continue;
+        const GradRule *r = &gGradRules[i];
+        if (r->mode == GRAD_SUBJECT_COUNT) { done[i] = 1; continue; }
+        if (r->group_id != 0) {
+            int best = 0;
+            for (int j = 0; j < sizeSubjectType; j++) {
+                if (gGradRules[j].group_id == r->group_id) {
+                    int pc = calc_pass_credits_type_sandbox(p, j);
+                    if (pc > best) best = pc;
+                    done[j] = 1;
+                }
+            }
+            count += best;
+        } else {
+            count += calc_pass_credits_type_sandbox(p, i);
+            done[i] = 1;
+        }
+    }
+    return count;
+}
+
+static HonorProjection honor_project_sandbox(Player *p)
+{
+    HonorProjection hp;
+    hp.eff       = calc_effective_credits_sandbox(p);
+    hp.req       = calc_required_credits(p);
+    hp.remaining = hp.req - hp.eff;
+    if (hp.remaining < 0) hp.remaining = 0;
+    hp.rate      = calc_cpa_sandbox(p, 1);
+    int   req    = hp.req > 0 ? hp.req : 1;
+    float P      = hp.rate * (float)hp.eff;
+    hp.ceiling   = (P + 4.0f * (float)hp.remaining) / (float)req;
+    hp.floor     = (P + 1.0f * (float)hp.remaining) / (float)req;
+    if (hp.ceiling > 4.0f) hp.ceiling = 4.0f;
+    if (hp.floor   < 0.0f) hp.floor   = 0.0f;
+    hp.projected = honor_tier(hp.rate);
+    hp.best      = honor_tier(hp.ceiling);
+    hp.worst     = honor_tier(hp.floor);
+    return hp;
+}
+
+static void RenderSandboxGradeStepper(int uid, const char *subject_id)
+{
+    int idx = 0;
+    SandboxOverride *ov = GetSandboxOverride(subject_id);
+    if (ov && ov->grade_letter != 0) {
+        if (ov->grade_letter == 'F') idx = 1;
+        else if (ov->grade_letter == 'D' && !ov->plus) idx = 2;
+        else if (ov->grade_letter == 'D' && ov->plus) idx = 3;
+        else if (ov->grade_letter == 'C' && !ov->plus) idx = 4;
+        else if (ov->grade_letter == 'C' && ov->plus) idx = 5;
+        else if (ov->grade_letter == 'B' && !ov->plus) idx = 6;
+        else if (ov->grade_letter == 'B' && ov->plus) idx = 7;
+        else if (ov->grade_letter == 'A') idx = 8;
+    }
+
+    CLAY(CLAY_IDI("SandboxStep", uid), {
+        .layout = { .sizing          = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIT(0) },
+                    .childGap        = SP_XS,
+                    .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                    .layoutDirection = CLAY_LEFT_TO_RIGHT },
+    }) {
+        bool dec_clicked = false;
+        int btn_sz = 22;
+        CLAY(CLAY_IDI("SandDecBtn", uid), {
+            .layout = {
+                .sizing         = { CLAY_SIZING_FIXED(btn_sz), CLAY_SIZING_FIXED(btn_sz) },
+                .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+            },
+            .backgroundColor = Clay_Hovered() ? C_ACCENT : C_CARD,
+            .cornerRadius    = CLAY_CORNER_RADIUS(4),
+            .border          = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+        }) {
+            if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) dec_clicked = true;
+            CLAY_TEXT(CLAY_STRING("-"), TC(Clay_Hovered() ? C_WHITE : C_ACCENT, 11));
+        }
+
+        char val_buf[8];
+        if (idx == 0) strcpy(val_buf, "-");
+        else if (idx == 1) strcpy(val_buf, "F");
+        else if (idx == 2) strcpy(val_buf, "D");
+        else if (idx == 3) strcpy(val_buf, "D+");
+        else if (idx == 4) strcpy(val_buf, "C");
+        else if (idx == 5) strcpy(val_buf, "C+");
+        else if (idx == 6) strcpy(val_buf, "B");
+        else if (idx == 7) strcpy(val_buf, "B+");
+        else if (idx == 8) strcpy(val_buf, "A");
+
+        CLAY(CLAY_IDI("SandValBox", uid), {
+            .layout = {
+                .sizing         = { CLAY_SIZING_FIXED(36), CLAY_SIZING_FIXED(btn_sz) },
+                .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+            },
+            .backgroundColor = (idx > 0) ? C_ACCENT_BG : C_TBL_HDR,
+            .cornerRadius    = CLAY_CORNER_RADIUS(4),
+            .border          = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+        }) {
+            CLAY_TEXT(CS(val_buf), TC((idx > 0) ? C_ACCENT : C_SUBTEXT, 10));
+        }
+
+        bool inc_clicked = false;
+        CLAY(CLAY_IDI("SandIncBtn", uid), {
+            .layout = {
+                .sizing         = { CLAY_SIZING_FIXED(btn_sz), CLAY_SIZING_FIXED(btn_sz) },
+                .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+            },
+            .backgroundColor = Clay_Hovered() ? C_ACCENT : C_CARD,
+            .cornerRadius    = CLAY_CORNER_RADIUS(4),
+            .border          = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+        }) {
+            if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) inc_clicked = true;
+            CLAY_TEXT(CLAY_STRING("+"), TC(Clay_Hovered() ? C_WHITE : C_ACCENT, 11));
+        }
+
+        if (dec_clicked || inc_clicked) {
+            int new_idx = idx;
+            if (dec_clicked) new_idx--;
+            if (inc_clicked) new_idx++;
+            if (new_idx < 0) new_idx = 0;
+            if (new_idx > 8) new_idx = 8;
+
+            if (new_idx != idx) {
+                if (new_idx == 0) {
+                    SetSandboxOverride(subject_id, 0, 0);
+                } else {
+                    char letter = 'F';
+                    int plus = 0;
+                    if (new_idx == 1) { letter = 'F'; plus = 0; }
+                    else if (new_idx == 2) { letter = 'D'; plus = 0; }
+                    else if (new_idx == 3) { letter = 'D'; plus = 1; }
+                    else if (new_idx == 4) { letter = 'C'; plus = 0; }
+                    else if (new_idx == 5) { letter = 'C'; plus = 1; }
+                    else if (new_idx == 6) { letter = 'B'; plus = 0; }
+                    else if (new_idx == 7) { letter = 'B'; plus = 1; }
+                    else if (new_idx == 8) { letter = 'A'; plus = 0; }
+                    SetSandboxOverride(subject_id, letter, plus);
+                }
+            }
+        }
+    }
+}
+
 void RenderPlanner(void)
 {
-    HonorProjection hp = honor_project(&gPlayer);
+    HonorProjection hp = honor_project_sandbox(&gPlayer);
 
     /* ── pick the recommended member of each pick-best module group ──
      * (the one with the most passed credits so far; ties keep the first). */
@@ -1755,8 +2066,23 @@ void RenderPlanner(void)
             .border          = { .color = honor_color(hp.projected),
                                  .width = { .left = 3, .top = 1, .right = 1, .bottom = 1 } },
         }) {
-            CLAY_TEXT(CLAY_STRING(STR_PLAN_PROJECTED_LABEL),
-                      TC(C_SUBTEXT, 9));
+            CLAY(CLAY_ID("PlanStandingHeader"), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                            .childGap = SP_SM, .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                            .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
+            }) {
+                CLAY_TEXT(CLAY_STRING(STR_PLAN_PROJECTED_LABEL),
+                          TC(C_SUBTEXT, 9));
+                if (gApp.sandbox_override_count > 0) {
+                    CLAY(CLAY_ID("PlanSandboxBadge"), {
+                        .layout = { .padding = { 6, 6, 2, 2 } },
+                        .backgroundColor = C_ACCENT_BG,
+                        .cornerRadius    = CLAY_CORNER_RADIUS(3),
+                    }) {
+                        CLAY_TEXT(CLAY_STRING("SANDBOX ACTIVE (SIMULATED)"), TC(C_ACCENT, 8));
+                    }
+                }
+            }
             CLAY_TEXT(CS(honor_name(hp.projected)), TC(honor_color(hp.projected), 24));
             CLAY_TEXT(DS(STR_PLAN_STATS_FORMAT,
                          hp.rate, hp.eff, hp.req, hp.remaining),
@@ -1996,6 +2322,12 @@ void RenderPlanner(void)
                         CLAY_TEXT(g, TC(sport ? C_GREEN : score_color(gl), 10));
                     }
                 }
+
+                /* Sandbox Grade Simulator stepper */
+                if (!gIsMobile) {
+                    CLAY_TEXT(CLAY_STRING("Simulate:"), TC(C_SUBTEXT, 9));
+                }
+                RenderSandboxGradeStepper(i, n->ID);
             }
         }
     }
@@ -2010,8 +2342,9 @@ void RenderPlanner(void)
  * extra step — the TC/TCW macros read gFontScale fresh every frame. */
 static void UiCfgApplyAndSave(void)
 {
-    AppConfig_Save("assets/ui.cfg", gApp.font_scale, gApp.target_fps);
+    AppConfig_Save("assets/ui.cfg", gApp.font_scale, gApp.target_fps, gApp.theme_id);
     SetTargetFPS(gApp.target_fps);
+    Theme_Apply(gApp.theme_id);
     snprintf(gResultMsg, sizeof(gResultMsg), STR_CFG_UI_SAVED);
     ShowToastFor(2.5f);
 }
@@ -2458,6 +2791,16 @@ void RenderSettings(void)
                 gApp.target_fps = kFpsPresets[idx];
                 UiCfgApplyAndSave();
             }
+
+            /* Theme — theme_id, cycling 0..2 */
+            static const char *kThemeLabels[] = { "Paper", "Midnight Slate", "Nordic Forest" };
+            int dTheme = RenderStepperRow(2, CLAY_STRING("Visual theme"),
+                             CS(kThemeLabels[gApp.theme_id]),
+                             CLAY_STRING("theme_id - 0 = Paper, 1 = Midnight Slate (Dark), 2 = Nordic Forest."));
+            if (dTheme != 0) {
+                gApp.theme_id = (gApp.theme_id + dTheme + 3) % 3;
+                UiCfgApplyAndSave();
+            }
         }
 
         /* ── Graduation rules (grad_config.cfg) — edit file, then reload ── */
@@ -2489,6 +2832,30 @@ void RenderSettings(void)
                     ShowToastFor(4.f);
                 }
                 CLAY_TEXT(CLAY_STRING(STR_CFG_GRAD_RELOAD_BTN),
+                          TC(Clay_Hovered() ? C_WHITE : C_TEXT, 11));
+            }
+        }
+
+        /* ── Portal copy-paste import (new feature) ── */
+        CFG_CARD_BEGIN("SetImportCfg", "Portal Grades Import", "Import grades from university portal")
+            CLAY_TEXT(CLAY_STRING("Copy your grade table from the HUST SIS portal and paste it using the tool to instantly populate your transcript."), TCW(C_SUBTEXT, 10));
+            CLAY(CLAY_ID("SetImportOpen"), {
+                .layout = {
+                    .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(32) },
+                    .padding        = { 16, 16, 0, 0 },
+                    .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+                },
+                .backgroundColor = Clay_Hovered() ? C_ACCENT_DIM : C_CARD,
+                .cornerRadius    = CLAY_CORNER_RADIUS(5),
+                .border          = { .color = C_BORDER,
+                                     .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+            }) {
+                if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                    gApp.import_open = true;
+                    gApp.import_buf[0] = '\0';
+                    gApp.import_len = 0;
+                }
+                CLAY_TEXT(CLAY_STRING("Open Import Tool"),
                           TC(Clay_Hovered() ? C_WHITE : C_TEXT, 11));
             }
         }
@@ -3317,5 +3684,257 @@ void RenderResultToast(void)
     }) {
         CLAY_TEXT(CLAY_STRING(STR_TOAST_ARROW),    TC(toastBdr, 12));
         CLAY_TEXT(DS("%s", gResultMsg), TC(textClr,  13));
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  PORTAL IMPORT POPUP
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+static int ImportPortalGrades(const char *text)
+{
+    if (!text || strlen(text) == 0) return 0;
+    
+    int imported_count = 0;
+    char *copy = strdup(text);
+    if (!copy) return 0;
+    
+    char *line = copy;
+    char *line_saveptr = NULL;
+    char *line_token = strtok_r(line, "\n\r", &line_saveptr);
+    
+    db_exec("BEGIN;");
+    while (line_token) {
+        char *line_copy = strdup(line_token);
+        if (line_copy) {
+            char *word_saveptr = NULL;
+            char *word = strtok_r(line_copy, " \t", &word_saveptr);
+            
+            char code[32] = {0};
+            bool found_code = false;
+            
+            float vals[16];
+            int n_vals = 0;
+            
+            while (word) {
+                int wl = (int)strlen(word);
+                while (wl > 0 && (word[wl-1] == ',' || word[wl-1] == ';' || word[wl-1] == ':')) {
+                    word[--wl] = '\0';
+                }
+                
+                if (!found_code && wl >= 5 && wl <= 10) {
+                    int alpha_count = 0;
+                    int digit_count = 0;
+                    for (int i = 0; i < wl; i++) {
+                        if (word[i] >= 'A' && word[i] <= 'Z') alpha_count++;
+                        else if (word[i] >= '0' && word[i] <= '9') digit_count++;
+                    }
+                    if (alpha_count >= 2 && digit_count >= 3) {
+                        strncpy(code, word, sizeof(code) - 1);
+                        for (int i = 0; code[i]; i++) {
+                            if (code[i] >= 'a' && code[i] <= 'z') code[i] -= 32;
+                        }
+                        if (DB_SubjectExists(code)) {
+                            found_code = true;
+                        }
+                    }
+                } else if (found_code) {
+                    char *endptr = NULL;
+                    float v = (float)strtod(word, &endptr);
+                    if (endptr != word && *endptr == '\0') {
+                        if (n_vals < 16) {
+                            vals[n_vals++] = v;
+                        }
+                    }
+                }
+                word = strtok_r(NULL, " \t", &word_saveptr);
+            }
+            
+            if (found_code && n_vals > 0) {
+                int credits = DB_GetSubjectCredits(code);
+                int score_start_idx = 0;
+                
+                if (score_start_idx < n_vals && (int)vals[score_start_idx] == credits) {
+                    score_start_idx++;
+                }
+                
+                if (score_start_idx < n_vals && vals[score_start_idx] > 100.f) {
+                    score_start_idx++;
+                }
+                
+                float mid = -1.f;
+                float fin = -1.f;
+                
+                if (score_start_idx < n_vals) {
+                    float v = vals[score_start_idx++];
+                    if (v >= 0.f && v <= 10.f) mid = v;
+                }
+                if (score_start_idx < n_vals) {
+                    float v = vals[score_start_idx++];
+                    if (v >= 0.f && v <= 10.f) fin = v;
+                }
+                
+                if (mid >= 0.f || fin >= 0.f) {
+                    if (mid < 0.f) mid = 0.f;
+                    if (fin < 0.f) fin = 0.f;
+                    
+                    DB_UpdateScore(code, mid, fin);
+                    imported_count++;
+                }
+            }
+            free(line_copy);
+        }
+        line_token = strtok_r(NULL, "\n\r", &line_saveptr);
+    }
+    db_exec("COMMIT;");
+    free(copy);
+    return imported_count;
+}
+
+void RenderImportPopup(void)
+{
+    /* full-screen backdrop */
+    CLAY(CLAY_ID("ImportBackdrop"), {
+        .layout = {
+            .sizing = { CLAY_SIZING_FIXED((float)gScreenW),
+                        CLAY_SIZING_FIXED((float)gScreenH) },
+        },
+        .backgroundColor = (Clay_Color){ 27, 26, 23, 110 },
+        .floating = {
+            .attachTo = CLAY_ATTACH_TO_ROOT,
+            .zIndex   = 5,
+        },
+    }) {}
+
+    /* popup card */
+    CLAY(CLAY_ID("ImportCard"), {
+        .layout = {
+            .sizing          = { CLAY_SIZING_FIXED(580), CLAY_SIZING_FIT(0) },
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            .childGap        = SP_MD,
+            .padding         = { 20, 20, 20, 20 },
+        },
+        .backgroundColor = C_CARD,
+        .cornerRadius    = CLAY_CORNER_RADIUS(12),
+        .border          = { .color = C_ACCENT,
+                             .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+        .floating = {
+            .attachTo     = CLAY_ATTACH_TO_ROOT,
+            .attachPoints = { .element = CLAY_ATTACH_POINT_CENTER_CENTER,
+                              .parent  = CLAY_ATTACH_POINT_CENTER_CENTER },
+            .zIndex       = 10,
+        },
+    }) {
+        /* Title */
+        CLAY(CLAY_ID("ImpTitleRow"), {
+            .layout = { .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                        .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                        .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                        .childGap        = SP_SM },
+        }) {
+            CLAY(CLAY_ID("ImpBadge"), {
+                .layout = { .sizing = { CLAY_SIZING_FIXED(6), CLAY_SIZING_FIXED(18) } },
+                .backgroundColor = C_ACCENT,
+                .cornerRadius = CLAY_CORNER_RADIUS(2)
+            }) {}
+            CLAY_TEXT(CLAY_STRING("Portal Grades Import"), TC(C_TEXT, 16));
+        }
+
+        CLAY_TEXT(CLAY_STRING("Copy your grades table from HUST SIS or any other portal, then click \"Paste from Clipboard\" to parse and update your scores. (Ctrl+V works as a shortcut)"), TCW(C_SUBTEXT, 10));
+
+        /* Preview box */
+        CLAY(CLAY_ID("ImpPreviewContainer"), {
+            .layout = {
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(140) },
+                .padding         = { 12, 12, 10, 10 },
+                .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            },
+            .backgroundColor = C_BG,
+            .cornerRadius    = CLAY_CORNER_RADIUS(6),
+            .border          = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } }
+        }) {
+            if (gApp.import_len > 0) {
+                char preview[120];
+                int preview_len = gApp.import_len;
+                if (preview_len > 100) preview_len = 100;
+                strncpy(preview, gApp.import_buf, preview_len);
+                preview[preview_len] = '\0';
+                if (gApp.import_len > 100) strcat(preview, "...");
+
+                CLAY_TEXT(CS(preview), TCW(C_TEXT, 11));
+            } else {
+                CLAY_TEXT(CLAY_STRING("No text pasted yet. Please copy from portal and click Paste below."), TCW(C_SUBTEXT, 11));
+            }
+        }
+
+        /* Buttons Row */
+        CLAY(CLAY_ID("ImpBtnRow"), {
+            .layout = {
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .childGap        = SP_MD,
+                .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                .childAlignment  = { .x = CLAY_ALIGN_X_RIGHT }
+            }
+        }) {
+            /* Paste Button */
+            CLAY(CLAY_ID("ImpBtnPaste"), {
+                .layout = {
+                    .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(32) },
+                    .padding        = { 14, 14, 0, 0 },
+                    .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                },
+                .backgroundColor = Clay_Hovered() ? C_ACCENT_DIM : C_ACCENT,
+                .cornerRadius    = CLAY_CORNER_RADIUS(6),
+            }) {
+                if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                    const char *clipText = GetClipboardText();
+                    if (clipText) {
+                        strncpy(gApp.import_buf, clipText, sizeof(gApp.import_buf) - 1);
+                        gApp.import_buf[sizeof(gApp.import_buf) - 1] = '\0';
+                        gApp.import_len = (int)strlen(gApp.import_buf);
+                    }
+                }
+                CLAY_TEXT(CLAY_STRING("Paste from Clipboard"), TC(C_WHITE, 11));
+            }
+
+            /* Import button */
+            bool can_import = gApp.import_len > 0;
+            CLAY(CLAY_ID("ImpBtnApply"), {
+                .layout = {
+                    .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(32) },
+                    .padding        = { 14, 14, 0, 0 },
+                    .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                },
+                .backgroundColor = !can_import ? C_BORDER : (Clay_Hovered() ? C_GREEN_BG : C_CARD),
+                .cornerRadius    = CLAY_CORNER_RADIUS(6),
+                .border          = { .color = can_import ? C_GREEN : C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } }
+            }) {
+                if (can_import && Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                    int count = ImportPortalGrades(gApp.import_buf);
+                    snprintf(gResultMsg, sizeof(gResultMsg), "Successfully imported %d grades!", count);
+                    ShowToastFor(5.f);
+                    gApp.import_open = false;
+                    RefreshPlayer();
+                }
+                CLAY_TEXT(CLAY_STRING("Import & Apply"), TC(!can_import ? C_SUBTEXT : C_GREEN, 11));
+            }
+
+            /* Cancel button */
+            CLAY(CLAY_ID("ImpBtnCancel"), {
+                .layout = {
+                    .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(32) },
+                    .padding        = { 14, 14, 0, 0 },
+                    .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                },
+                .backgroundColor = Clay_Hovered() ? C_ROW_HOVER : C_CARD,
+                .cornerRadius    = CLAY_CORNER_RADIUS(6),
+                .border          = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } }
+            }) {
+                if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                    gApp.import_open = false;
+                }
+                CLAY_TEXT(CLAY_STRING("Cancel"), TC(C_TEXT, 11));
+            }
+        }
     }
 }
