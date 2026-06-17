@@ -1,9 +1,11 @@
 #include "db.h"
 #include "app_data.h"
+#include "score_logic.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <dirent.h>
 
 #define gDB (gApp.db)
 #define gTypeName (gApp.type_name)
@@ -802,6 +804,87 @@ int DB_GetSubjectCredits(const char *code)
 void DB_Close(void)
 {
     if(gDB){ sqlite3_close(gDB); gDB=NULL; DB_Persist(); }
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+ * LoadPlayerFromName — load target player's transcript into out_player (read-only)
+ * ───────────────────────────────────────────────────────────────────── */
+int LoadPlayerFromName(const char *username, Player *out_player)
+{
+    sqlite3 *saved_db = gDB;
+    gDB = NULL;
+    
+    char path[128];
+    db_path(username, path, sizeof(path));
+
+    /* Open read-write: when this (sole) connection closes, SQLite checkpoints
+     * the WAL and deletes the -wal/-shm sidecar files. A read-only connection
+     * cannot do that, which is why comparing another person used to leave
+     * db_<name>.db-wal / db_<name>.db-shm behind. We only issue SELECTs here;
+     * the lone write is SQLite's internal checkpoint-on-close. */
+    int rc = sqlite3_open_v2(path, &gDB, SQLITE_OPEN_READWRITE, NULL);
+    if (rc != SQLITE_OK) {
+        /* Fallback for read-only media: immutable reads the file directly and
+         * never creates -wal/-shm in the first place. */
+        if (gDB) { sqlite3_close(gDB); gDB = NULL; }
+        char uri[160];
+        snprintf(uri, sizeof(uri), "file:%s?immutable=1", path);
+        rc = sqlite3_open_v2(uri, &gDB, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, NULL);
+    }
+    if (rc != SQLITE_OK) {
+        if (gDB) sqlite3_close(gDB);
+        gDB = saved_db;
+        return 0;
+    }
+
+    memset(out_player, 0, sizeof(Player));
+    DB_Query(out_player);
+    update_player_status(out_player);
+
+    sqlite3_close(gDB);
+    gDB = saved_db;
+    return 1;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+ * GetAvailableUsers — scan the filesystem for available db_*.db files
+ * ───────────────────────────────────────────────────────────────────── */
+int GetAvailableUsers(char names[16][32])
+{
+    int count = 0;
+    const char *dir_path = ".";
+#if defined(PLATFORM_WEB)
+    dir_path = DB_PERSIST_DIR;
+#endif
+
+    DIR *dir = opendir(dir_path);
+    if (!dir) return 0;
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        int len = (int)strlen(entry->d_name);
+        if (len > 6 && strncmp(entry->d_name, "db_", 3) == 0 && strcmp(entry->d_name + len - 3, ".db") == 0) {
+            int name_len = len - 6;
+            if (name_len > 0 && name_len < 32) {
+                char username[32];
+                memcpy(username, entry->d_name + 3, name_len);
+                username[name_len] = '\0';
+                
+                bool dup = false;
+                for (int i = 0; i < count; i++) {
+                    if (strcmp(names[i], username) == 0) {
+                        dup = true;
+                        break;
+                    }
+                }
+                if (!dup && count < 16) {
+                    strcpy(names[count++], username);
+                }
+            }
+        }
+    }
+    closedir(dir);
+    return count;
 }
 
 /* ─────────────────────────────────────────────────────────────────────

@@ -29,6 +29,8 @@ int DB_GetSubjectCredits(const char *code);
 int DB_UpdateGradRule(int type_id, int mode, int limit_val, int group_id);
 int DB_SaveGradConfig(const char *path);
 void DB_Close(void);
+int LoadPlayerFromName(const char *username, Player *out_player);
+int GetAvailableUsers(char names[16][32]);
 
 void DB_PersistInit(void);
 void DB_Persist(void);

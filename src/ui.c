@@ -13,7 +13,7 @@
 
 AppTheme gTheme;
 
-static const AppTheme kThemePresets[3] = {
+static const AppTheme kThemePresets[4] = {
     /* 0: Academic Paper (Warm Light) */
     {
         .bg         = {241, 237, 229, 255},
@@ -82,12 +82,35 @@ static const AppTheme kThemePresets[3] = {
         .red_bg     = {246, 225, 221, 255},
         .yellow     = {166, 124,  36, 255},
         .yellow_bg  = {245, 236, 212, 255}
+    },
+    /* 3: Elden Ring (Erdtree Gold on Warm Charcoal-Black) */
+    {
+        .bg         = { 18,  16,  13, 255},
+        .sidebar    = { 13,  11,   9, 255},
+        .card       = { 26,  23,  18, 255},
+        .tbl_hdr    = { 34,  30,  23, 255},
+        .row_odd    = { 22,  19,  15, 255},
+        .row_even   = { 26,  23,  18, 255},
+        .row_hover  = { 46,  39,  25, 255},
+        .border     = { 58,  49,  32, 255},
+        .accent     = {201, 162,  39, 255},
+        .accent_dim = {224, 191,  92, 255},
+        .accent_bg  = { 48,  40,  20, 255},
+        .text       = {234, 224, 201, 255},
+        .subtext    = {158, 145, 115, 255},
+        .white      = {245, 238, 222, 255},
+        .green      = { 96, 168, 112, 255},
+        .green_bg   = { 26,  46,  31, 255},
+        .red        = {196,  74,  60, 255},
+        .red_bg     = { 56,  26,  22, 255},
+        .yellow     = {214, 142,  48, 255},
+        .yellow_bg  = { 56,  42,  20, 255}
     }
 };
 
 void Theme_Apply(int theme_id)
 {
-    if (theme_id < 0 || theme_id >= 3) theme_id = 0;
+    if (theme_id < 0 || theme_id >= 4) theme_id = 0;
     gTheme = kThemePresets[theme_id];
 }
 
@@ -303,6 +326,8 @@ static void RenderNavItem(int idx, const char *label, int warn)
                 CLAY_TEXT(CLAY_STRING(STR_NAV_P_BADGE), TC(active ? C_WHITE : C_SUBTEXT, 9));
             else if (idx == NAV_SETTINGS)
                 CLAY_TEXT(CLAY_STRING(STR_NAV_S_BADGE), TC(active ? C_WHITE : C_SUBTEXT, 9));
+            else if (idx == NAV_COMPARE)
+                CLAY_TEXT(CLAY_STRING("C"), TC(active ? C_WHITE : C_SUBTEXT, 9));
             else
                 CLAY_TEXT(DS("%d", idx), TC(active ? C_WHITE : C_SUBTEXT, 9));
         }
@@ -382,6 +407,7 @@ void RenderSidebar(void)
         /* Dashboard + Planner — overview views, not subject types */
         RenderNavItem(0, STR_NAV_DASHBOARD, 0);
         RenderNavItem(NAV_PLANNER, STR_NAV_PLANNER, 0);
+        RenderNavItem(NAV_COMPARE, "Compare Students", 0);
 
         /* one nav item per subject type — only show types that have subjects */
         {
@@ -615,9 +641,12 @@ void RenderTopBar(void)
         }
 
         /* Active section title */
-        const char *title = (gActiveNav == 0)          ? STR_NAV_DASHBOARD
-                          : (gActiveNav == NAV_PLANNER) ? STR_NAV_PLANNER
-                          :                               gTypeName[gActiveNav];
+        const char *title = (gActiveNav == 0)           ? STR_NAV_DASHBOARD
+                          : (gActiveNav == NAV_PLANNER)  ? STR_NAV_PLANNER
+                          : (gActiveNav == NAV_SETTINGS) ? "Settings"
+                          : (gActiveNav == NAV_COMPARE)  ? "Compare Students"
+                          : (gActiveNav >= 1 && gActiveNav < sizeSubjectType) ? gTypeName[gActiveNav]
+                          : "";
         CLAY_TEXT(CS(title), TC(C_TEXT, 16));
     }
 }
@@ -2963,13 +2992,13 @@ void RenderSettings(void)
                 UiCfgApplyAndSave();
             }
 
-            /* Theme — theme_id, cycling 0..2 */
-            static const char *kThemeLabels[] = { "Paper", "Midnight Slate", "Nordic Forest" };
+            /* Theme — theme_id, cycling 0..3 */
+            static const char *kThemeLabels[] = { "Paper", "Midnight Slate", "Nordic Forest", "Elden Ring" };
             int dTheme = RenderStepperRow(2, CLAY_STRING("Visual theme"),
                              CS(kThemeLabels[gApp.theme_id]),
-                             CLAY_STRING("theme_id - 0 = Paper, 1 = Midnight Slate (Dark), 2 = Nordic Forest."));
+                             CLAY_STRING("theme_id - 0 = Paper, 1 = Midnight Slate (Dark), 2 = Nordic Forest, 3 = Elden Ring."));
             if (dTheme != 0) {
-                gApp.theme_id = (gApp.theme_id + dTheme + 3) % 3;
+                gApp.theme_id = (gApp.theme_id + dTheme + 4) % 4;
                 UiCfgApplyAndSave();
             }
         }
@@ -4151,14 +4180,11 @@ void RenderImportPopup(void)
             .border          = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } }
         }) {
             if (gApp.import_len > 0) {
-                char preview[120];
-                int preview_len = gApp.import_len;
-                if (preview_len > 100) preview_len = 100;
-                strncpy(preview, gApp.import_buf, preview_len);
-                preview[preview_len] = '\0';
-                if (gApp.import_len > 100) strcat(preview, "...");
-
-                CLAY_TEXT(CS(preview), TCW(C_TEXT, 11));
+                if (gApp.import_len > 100) {
+                    CLAY_TEXT(DS("%.100s...", gApp.import_buf), TCW(C_TEXT, 11));
+                } else {
+                    CLAY_TEXT(DS("%s", gApp.import_buf), TCW(C_TEXT, 11));
+                }
             } else {
                 CLAY_TEXT(CLAY_STRING("No text pasted yet. Please copy from portal and click Paste below."), TCW(C_SUBTEXT, 11));
             }
@@ -4223,7 +4249,7 @@ void RenderImportPopup(void)
                     .padding        = { 14, 14, 0, 0 },
                     .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
                 },
-                .backgroundColor = Clay_Hovered() ? C_ROW_HOVER : C_CARD,
+                .backgroundColor = Clay_Hovered() ? C_TBL_HDR : C_CARD,
                 .cornerRadius    = CLAY_CORNER_RADIUS(6),
                 .border          = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } }
             }) {
@@ -4232,6 +4258,369 @@ void RenderImportPopup(void)
                 }
                 CLAY_TEXT(CLAY_STRING("Cancel"), TC(C_TEXT, 11));
             }
+        }
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  STUDENT COMPARISON
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+static char sCompareNames[3][32] = {0};
+static Player sComparePlayers[3];
+static bool sCompareLoaded[3] = {false, false, false};
+
+void ClearCompareState(void)
+{
+    for (int i = 0; i < 3; i++) {
+        sCompareNames[i][0] = '\0';
+        sCompareLoaded[i] = false;
+        memset(&sComparePlayers[i], 0, sizeof(Player));
+    }
+}
+
+bool CompareGetStudent(int index, const char **out_name, Player **out_player)
+{
+    if (index < 0 || index >= 3) return false;
+    if (!sCompareLoaded[index]) return false;
+    if (out_name) *out_name = sCompareNames[index];
+    if (out_player) *out_player = &sComparePlayers[index];
+    return true;
+}
+
+static void CompareTryAdd(const char *name)
+{
+    int slot = -1;
+    for (int i = 0; i < 3; i++) {
+        if (sCompareLoaded[i] && strcmp(sCompareNames[i], name) == 0) {
+            sCompareLoaded[i] = false;
+            sCompareNames[i][0] = '\0';
+            snprintf(gResultMsg, sizeof(gResultMsg), "Removed '%s' from comparison.", name);
+            ShowToastFor(3.0f);
+            return;
+        }
+    }
+    
+    for (int i = 0; i < 3; i++) {
+        if (!sCompareLoaded[i]) {
+            slot = i;
+            break;
+        }
+    }
+    
+    if (slot == -1) {
+        snprintf(gResultMsg, sizeof(gResultMsg), "Comparison slots are full!");
+        ShowToastFor(3.0f);
+        return;
+    }
+    
+    strcpy(sCompareNames[slot], name);
+    if (LoadPlayerFromName(name, &sComparePlayers[slot])) {
+        sCompareLoaded[slot] = true;
+        snprintf(gResultMsg, sizeof(gResultMsg), "Added '%s' for comparison.", name);
+        ShowToastFor(3.0f);
+    } else {
+        snprintf(gResultMsg, sizeof(gResultMsg), "Failed to load '%s'.", name);
+        ShowToastFor(3.0f);
+    }
+}
+
+void CompareTryAddCustom(void)
+{
+    if (gApp.compare_input_len == 0) return;
+    
+    if (!DB_Exists(gApp.compare_input)) {
+        snprintf(gResultMsg, sizeof(gResultMsg), "Database for '%s' does not exist!", gApp.compare_input);
+        ShowToastFor(3.0f);
+        return;
+    }
+    
+    for (int i = 0; i < 3; i++) {
+        if (sCompareLoaded[i] && strcmp(sCompareNames[i], gApp.compare_input) == 0) {
+            snprintf(gResultMsg, sizeof(gResultMsg), "'%s' is already added!", gApp.compare_input);
+            ShowToastFor(3.0f);
+            return;
+        }
+    }
+    
+    int slot = -1;
+    for (int i = 0; i < 3; i++) {
+        if (!sCompareLoaded[i]) {
+            slot = i;
+            break;
+        }
+    }
+    
+    if (slot == -1) {
+        snprintf(gResultMsg, sizeof(gResultMsg), "All slots are full! Remove a student first.");
+        ShowToastFor(3.0f);
+        return;
+    }
+    
+    strcpy(sCompareNames[slot], gApp.compare_input);
+    if (LoadPlayerFromName(gApp.compare_input, &sComparePlayers[slot])) {
+        sCompareLoaded[slot] = true;
+        snprintf(gResultMsg, sizeof(gResultMsg), "Added '%s' for comparison.", gApp.compare_input);
+        ShowToastFor(3.0f);
+        gApp.compare_input[0] = '\0';
+        gApp.compare_input_len = 0;
+    } else {
+        snprintf(gResultMsg, sizeof(gResultMsg), "Failed to load database for '%s'.", gApp.compare_input);
+        ShowToastFor(3.0f);
+    }
+}
+
+
+
+void RenderCompare(void)
+{
+    if (strcmp(sCompareNames[0], gUserName) != 0) {
+        strcpy(sCompareNames[0], gUserName);
+        sCompareLoaded[0] = false;
+        if (gUserName[0] != '\0') {
+            if (LoadPlayerFromName(gUserName, &sComparePlayers[0])) {
+                sCompareLoaded[0] = true;
+            }
+        }
+    }
+    
+
+
+    char available_names[16][32];
+    int avail_count = GetAvailableUsers(available_names);
+
+    CLAY(CLAY_ID("ComparePage"), {
+        .layout = {
+            .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+            .padding         = { 24, 24, 20, 20 },
+            .childGap        = SP_LG,
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+        },
+        .backgroundColor = C_BG,
+        .clip = { .vertical = true, .childOffset = Clay_GetScrollOffset() },
+    }) {
+        /* Title */
+        CLAY(CLAY_ID("CompareHdr"), {
+            .layout = { .sizing = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIT(0) },
+                        .childGap = SP_XS, .layoutDirection = CLAY_TOP_TO_BOTTOM },
+        }) {
+            CLAY_TEXT(CLAY_STRING("Student Comparison"), TC(C_TEXT, 26));
+            CLAY_TEXT(CLAY_STRING("Compare GPA, credit completion, and category progress side-by-side (Read-Only)."),
+                      TC(C_SUBTEXT, 11));
+        }
+
+        /* Slots config */
+        CLAY(CLAY_ID("CompareSlotsRow"), {
+            .layout = {
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .childGap        = SP_MD,
+                .layoutDirection = gIsMobile ? CLAY_TOP_TO_BOTTOM : CLAY_LEFT_TO_RIGHT,
+            },
+        }) {
+            for (int i = 0; i < 3; i++) {
+                CLAY(CLAY_IDI("CompareSlotCard", i), {
+                    .layout = {
+                        .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(80) },
+                        .padding         = { 12, 12, 10, 10 },
+                        .childGap        = SP_XS,
+                        .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                    },
+                    .backgroundColor = C_CARD,
+                    .cornerRadius    = CLAY_CORNER_RADIUS(6),
+                    .border          = { .color = sCompareLoaded[i] ? C_ACCENT : C_BORDER, 
+                                         .width = { .left = sCompareLoaded[i] ? 3 : 1, .top = 1, .right = 1, .bottom = 1 } }
+                }) {
+                    CLAY(CLAY_IDI("SlotCardHdr", i), {
+                        .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                                    .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                                    .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } }
+                    }) {
+                        CLAY_TEXT(DS("Slot %d", i + 1), TC(C_SUBTEXT, 9));
+                        CLAY(CLAY_IDI("SlotSpacer", i), { .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) } } }) {}
+                        
+                        if (sCompareLoaded[i] && i > 0) {
+                            CLAY(CLAY_IDI("SlotRemoveBtn", i), {
+                                .layout = { .padding = { 6, 6, 2, 2 } },
+                                .backgroundColor = Clay_Hovered() ? C_RED : C_RED_BG,
+                                .cornerRadius = CLAY_CORNER_RADIUS(3)
+                            }) {
+                                if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                                    sCompareLoaded[i] = false;
+                                    sCompareNames[i][0] = '\0';
+                                }
+                                CLAY_TEXT(CLAY_STRING("Remove"), TC(Clay_Hovered() ? C_WHITE : C_RED, 8));
+                            }
+                        }
+                    }
+                    
+                    if (sCompareLoaded[i]) {
+                        CLAY_TEXT(CS(sCompareNames[i]), TC(C_TEXT, 14));
+                    } else {
+                        CLAY_TEXT(CLAY_STRING("Empty Slot"), TC(C_SUBTEXT, 12));
+                    }
+                }
+            }
+        }
+
+        /* Available list & custom input row */
+        CLAY(CLAY_ID("CompareAvailCard"), {
+            .layout = {
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .padding         = { 16, 16, 14, 14 },
+                .childGap        = SP_MD,
+                .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            },
+            .backgroundColor = C_CARD,
+            .cornerRadius    = CLAY_CORNER_RADIUS(6),
+            .border          = { .color = C_BORDER, .width = { .left = 3, .top = 1, .right = 1, .bottom = 1 } }
+        }) {
+            CLAY_TEXT(CLAY_STRING("Add Students from Databases"), TC(C_TEXT, 12));
+            CLAY_TEXT(CLAY_STRING("Click on a student's name to add them to or remove them from comparison:"), TC(C_SUBTEXT, 10));
+            
+            CLAY(CLAY_ID("CompareAvailChips"), {
+                .layout = {
+                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                    .childGap        = SP_SM,
+                    .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                    .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                }
+            }) {
+                if (avail_count <= 0) {
+                    CLAY_TEXT(CLAY_STRING("No other student database files (db_*.db) found in directory."), TC(C_SUBTEXT, 11));
+                } else {
+                    for (int k = 0; k < avail_count; k++) {
+                        bool selected = false;
+                        for (int i = 0; i < 3; i++) {
+                            if (sCompareLoaded[i] && strcmp(sCompareNames[i], available_names[k]) == 0) {
+                                selected = true;
+                                break;
+                            }
+                        }
+                        
+                        CLAY(CLAY_IDI("AvailChip", k), {
+                            .layout = {
+                                .sizing  = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(28) },
+                                .padding = { 12, 12, 0, 0 },
+                                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                            },
+                            .backgroundColor = selected ? C_ACCENT : (Clay_Hovered() ? C_ROW_HOVER : C_TBL_HDR),
+                            .cornerRadius    = CLAY_CORNER_RADIUS(14),
+                            .border          = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } }
+                        }) {
+                            if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                                CompareTryAdd(available_names[k]);
+                            }
+                            CLAY_TEXT(DS("%s", available_names[k]), TC(selected ? C_WHITE : C_TEXT, 10));
+                        }
+                    }
+                }
+            }
+
+            /* Custom input row */
+            CLAY(CLAY_ID("CustomInputRow"), {
+                .layout = {
+                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                    .childGap        = SP_MD,
+                    .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                    .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                }
+            }) {
+                CLAY_TEXT(CLAY_STRING("Or enter username directly:"), TC(C_SUBTEXT, 10));
+                
+                CLAY(CLAY_ID("CompareInputBox"), {
+                    .layout = {
+                        .sizing         = { CLAY_SIZING_FIXED(200), CLAY_SIZING_FIXED(28) },
+                        .padding        = { 10, 10, 0, 0 },
+                        .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                    },
+                    .backgroundColor = gApp.compare_focused ? C_BG : C_TBL_HDR,
+                    .cornerRadius    = CLAY_CORNER_RADIUS(5),
+                    .border          = { .color = gApp.compare_focused ? C_ACCENT : C_BORDER,
+                                         .width = { .left=1,.right=1,.top=1,.bottom=1 } }
+                }) {
+                    if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                        gApp.compare_focused = true;
+                    }
+                    if (gApp.compare_input_len > 0) {
+                        CLAY_TEXT(CS(gApp.compare_input), TC(C_TEXT, 10));
+                    } else {
+                        CLAY_TEXT(CLAY_STRING("Type username..."), TC(C_SUBTEXT, 10));
+                    }
+                }
+                
+                CLAY(CLAY_ID("CompareInputAddBtn"), {
+                    .layout = {
+                        .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(28) },
+                        .padding        = { 12, 12, 0, 0 },
+                        .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                    },
+                    .backgroundColor = Clay_Hovered() ? C_ACCENT : C_ACCENT_BG,
+                    .cornerRadius    = CLAY_CORNER_RADIUS(5),
+                }) {
+                    if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                        CompareTryAddCustom();
+                        gApp.compare_focused = false;
+                    }
+                    CLAY_TEXT(CLAY_STRING("Add Student"), TC(Clay_Hovered() ? C_WHITE : C_ACCENT, 10));
+                }
+            }
+        }
+
+        /* ── CPA & GPA Comparison Chart ── */
+        CLAY(CLAY_ID("CompChartStatsCard"), {
+            .layout = {
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(280) },
+                .padding         = { 16, 16, 14, 14 },
+                .childGap        = SP_MD,
+                .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            },
+            .backgroundColor = C_CARD,
+            .cornerRadius    = CLAY_CORNER_RADIUS(6),
+            .border          = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } }
+        }) {
+            CLAY_TEXT(CLAY_STRING("CPA & GPA Comparison"), TC(C_TEXT, 14));
+            CLAY(CLAY_ID(COMP_CHART_STATS_ID), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } },
+                .backgroundColor = C_TRANS,
+            }) {}
+        }
+
+        /* ── Category-wise Credit Breakdown Chart ── */
+        CLAY(CLAY_ID("CompChartCategoriesCard"), {
+            .layout = {
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(560) },
+                .padding         = { 16, 16, 14, 14 },
+                .childGap        = SP_MD,
+                .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            },
+            .backgroundColor = C_CARD,
+            .cornerRadius    = CLAY_CORNER_RADIUS(6),
+            .border          = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } }
+        }) {
+            CLAY_TEXT(CLAY_STRING("Category-wise Completed Credits Comparison"), TC(C_TEXT, 14));
+            CLAY(CLAY_ID(COMP_CHART_CATEGORIES_ID), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } },
+                .backgroundColor = C_TRANS,
+            }) {}
+        }
+
+        /* ── Concentric Radial Progress Rings Card ── */
+        CLAY(CLAY_ID("CompChartRingsCard"), {
+            .layout = {
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(320) },
+                .padding         = { 16, 16, 14, 14 },
+                .childGap        = SP_MD,
+                .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            },
+            .backgroundColor = C_CARD,
+            .cornerRadius    = CLAY_CORNER_RADIUS(6),
+            .border          = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } }
+        }) {
+            CLAY_TEXT(CLAY_STRING("Category Progress Rings (Concentric)"), TC(C_TEXT, 14));
+            CLAY(CLAY_ID(COMP_CHART_RINGS_ID), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } },
+                .backgroundColor = C_TRANS,
+            }) {}
         }
     }
 }

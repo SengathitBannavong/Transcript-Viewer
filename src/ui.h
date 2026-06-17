@@ -10,6 +10,7 @@
 #define BP_MOBILE   900
 #define NAV_PLANNER (sizeSubjectType)
 #define NAV_SETTINGS (sizeSubjectType + 1)
+#define NAV_COMPARE (sizeSubjectType + 2)
 
 /* Spacing scale */
 #define SP_XS   4
@@ -22,6 +23,9 @@
 #define DONUT_GRADE_ID  "DashDonutGrade"
 #define DONUT_CPA_ID    "DashDonutCPA"
 #define RADAR_GRADE_ID  "DashRadarGrade"
+#define COMP_CHART_STATS_ID      "CompChartStats"
+#define COMP_CHART_CATEGORIES_ID "CompChartCategories"
+#define COMP_CHART_RINGS_ID      "CompChartRings"
 
 /* Themes */
 typedef struct {
@@ -87,6 +91,11 @@ void RenderEditPopup(void);
 void RenderCommandPopup(void);
 void RenderImportPopup(void);
 void RenderResultToast(void);
+void RenderCompare(void);
+void CompareTryAddCustom(void);
+void ClearCompareState(void);
+struct Player;
+bool CompareGetStudent(int index, const char **out_name, struct Player **out_player);
 
 void calc_grade_counts(int out[9]);
 bool EditTrySave(void);

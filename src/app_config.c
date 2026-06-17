@@ -38,7 +38,7 @@ AppConfig AppConfig_Load(const char *path)
             config.target_fps = fps;
         } else if (strcmp(key, "theme_id") == 0) {
             int tid = (int)val;
-            if (tid < 0 || tid > 2) tid = 0;
+            if (tid < 0 || tid > 3) tid = 0;
             config.theme_id = tid;
         }
     }

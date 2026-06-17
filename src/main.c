@@ -26,6 +26,20 @@
 /* Global Singleton Instance definition */
 AppContext gApp;
 
+/* Convert a theme Clay_Color into a Raylib Color so charts drawn directly
+   with Raylib (donuts, radar, comparison bars) follow the active theme. */
+static inline Color Rc(Clay_Color c)
+{
+    return (Color){ (unsigned char)c.r, (unsigned char)c.g,
+                    (unsigned char)c.b, (unsigned char)c.a };
+}
+/* Same, but with an explicit alpha (for translucent gridlines/fills). */
+static inline Color RcA(Clay_Color c, unsigned char a)
+{
+    return (Color){ (unsigned char)c.r, (unsigned char)c.g,
+                    (unsigned char)c.b, a };
+}
+
 /* Macro mappings to gApp members */
 #define gScreenW (gApp.screen_w)
 #define gScreenH (gApp.screen_h)
@@ -99,6 +113,10 @@ void ReturnToNameInput(void)
     gApp.sandbox_override_count = 0;
     gApp.draft_override_count = 0;
     gApp.sandbox_dirty = false;
+    gApp.compare_focused = false;
+    gApp.compare_input[0] = '\0';
+    gApp.compare_input_len = 0;
+    ClearCompareState();
 }
 
 
@@ -206,6 +224,31 @@ static void HandleKeyboard(void)
         return;
     }
 
+    /* Keyboard input for Comparison page custom user input box */
+    if (gActiveNav == NAV_COMPARE && gApp.compare_focused) {
+        if (IsKeyPressed(KEY_ESCAPE)) {
+            gApp.compare_focused = false;
+            return;
+        }
+        if (IsKeyPressed(KEY_ENTER)) {
+            CompareTryAddCustom();
+            gApp.compare_focused = false;
+            return;
+        }
+        if ((IsKeyPressed(KEY_BACKSPACE) || IsKeyPressedRepeat(KEY_BACKSPACE))
+                && gApp.compare_input_len > 0) {
+            gApp.compare_input[--gApp.compare_input_len] = '\0';
+        }
+        int ch;
+        while ((ch = GetCharPressed()) != 0) {
+            if (ch >= 32 && ch < 127 && gApp.compare_input_len < 25) {
+                gApp.compare_input[gApp.compare_input_len++] = (char)ch;
+                gApp.compare_input[gApp.compare_input_len] = '\0';
+            }
+        }
+        return;
+    }
+
     /* Ctrl+K -- toggle palette */
     if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_K)) {
         gPopupOpen = !gPopupOpen;
@@ -268,6 +311,8 @@ static void BuildLayout(void)
                 RenderPlanner();
             else if (gActiveNav == NAV_SETTINGS)
                 RenderSettings();
+            else if (gActiveNav == NAV_COMPARE)
+                RenderCompare();
             else
                 RenderMainContent();
         }
@@ -508,7 +553,7 @@ static void UpdateDrawFrame(void)
         SetMouseCursor(gRowHover ? MOUSE_CURSOR_POINTING_HAND : MOUSE_CURSOR_DEFAULT);
 
         BeginDrawing();
-        ClearBackground((Color){ 241, 237, 229, 255 });
+        ClearBackground(Rc(C_BG));
         Clay_Raylib_Render(cmds, gFonts);
 
         /* ── Draw donut charts on top of Clay output (dashboard only) ── */
@@ -569,11 +614,11 @@ static void UpdateDrawFrame(void)
                 float tw = MeasureTextEx(gFonts[0], ctxt, 14.f, 1.f).x;
                 DrawTextEx(gFonts[0], ctxt,
                            (Vector2){cx - tw*0.5f, cy - 10.f},
-                           12.f*gFontScale, 1.f, (Color){27,26,23,255});
+                           12.f*gFontScale, 1.f, Rc(C_TEXT));
                 DrawTextEx(gFonts[0], "subj",
                            (Vector2){cx - MeasureTextEx(gFonts[0],"subj",10.f,1.f).x*0.5f,
                                      cy + 2.f},
-                           12.f*gFontScale, 1.f, (Color){122,116,104,255});
+                           12.f*gFontScale, 1.f, Rc(C_SUBTEXT));
             }
 
             /* ── CPA gauge (arc from -135° to 135°, 0..4 scale) ── */
@@ -590,7 +635,7 @@ static void UpdateDrawFrame(void)
 
                 /* background arc */
                 DrawRing((Vector2){cx,cy}, inner, r, -135.f, 135.f, 36,
-                         (Color){221,214,201,255});
+                         Rc(C_BORDER));
                 /* filled arc */
                 float fillEnd = -135.f + 270.f * (cpa_v / 4.f);
                 Color fillCol = cpa_v >= 3.5f ? (Color){ 47,120, 75,255}
@@ -610,7 +655,7 @@ static void UpdateDrawFrame(void)
                 DrawTextEx(gFonts[0], "/ 4.00",
                            (Vector2){cx - MeasureTextEx(gFonts[0],"/ 4.00",10.f,1.f).x*0.5f,
                                      cy + 8.f},
-                           12.f*gFontScale, 1.f, (Color){122,116,104,255});
+                           12.f*gFontScale, 1.f, Rc(C_SUBTEXT));
             }
 
             /* ── Grade-distribution radar (A+ A B+ B C+ C D+ D F) ── */
@@ -636,11 +681,11 @@ static void UpdateDrawFrame(void)
                     dir[i] = (Vector2){ cosf(a), sinf(a) };
                 }
 
-                Color gridCol   = (Color){221, 214, 201, 255};
-                Color spokeCol  = (Color){208, 200, 186, 255};
-                Color axisTxt   = (Color){122, 116, 104, 255};
-                Color dataLine  = (Color){140,  47,  42, 255};
-                Color dataFill  = (Color){140,  47,  42,  46};
+                Color gridCol   = Rc(C_BORDER);
+                Color spokeCol  = Rc(C_BORDER);
+                Color axisTxt   = Rc(C_SUBTEXT);
+                Color dataLine  = Rc(C_ACCENT);
+                Color dataFill  = RcA(C_ACCENT, 46);
 
                 /* concentric grid rings */
                 for (int k = 1; k <= 4; k++) {
@@ -692,12 +737,354 @@ static void UpdateDrawFrame(void)
             }
         }
 
+        /* ── Draw comparison charts on top of Clay output (compare page only) ── */
+        if (gDBReady && !gNameInput && gActiveNav == NAV_COMPARE) {
+            /* 1. CPA & GPA Comparison Chart */
+            Clay_ElementData sd = Clay_GetElementData(
+                Clay_GetElementId(CLAY_STRING(COMP_CHART_STATS_ID)));
+            if (sd.found && sd.boundingBox.width > 20.f) {
+                float x = sd.boundingBox.x;
+                float y = sd.boundingBox.y;
+                float w = sd.boundingBox.width;
+                float h = sd.boundingBox.height;
+
+                float padL = 50.f;
+                float padR = 20.f;
+                float padT = 30.f;
+                float padB = 30.f;
+
+                float chartW = w - padL - padR;
+                float chartH = h - padT - padB;
+
+                /* grid lines */
+                for (float val = 0.f; val <= 4.f; val += 1.f) {
+                    float y_pos = (y + padT + chartH) - (val / 4.0f) * chartH;
+                    DrawLineV((Vector2){x + padL, y_pos}, (Vector2){x + padL + chartW, y_pos}, RcA(C_BORDER, 150));
+                    char lbl[8];
+                    snprintf(lbl, sizeof(lbl), "%.1f", val);
+                    DrawTextEx(gFonts[0], lbl, (Vector2){x + padL - 30.f, y_pos - 6.f}, 10.f * gFontScale, 1.f, Rc(C_SUBTEXT));
+                }
+
+                /* draw bars for loaded students */
+                float slotW = chartW / 3.0f;
+                for (int i = 0; i < 3; i++) {
+                    float slotCX = x + padL + i * slotW + slotW * 0.5f;
+                    const char *name = NULL;
+                    Player *player = NULL;
+                    if (CompareGetStudent(i, &name, &player)) {
+                        float val_cpa = calc_cpa(player, 0);
+                        float val_gpa = calc_cpa(player, 1);
+                        if (val_cpa > 4.f) val_cpa = 4.f;
+                        if (val_gpa > 4.f) val_gpa = 4.f;
+
+                        float barW = slotW * 0.25f;
+                        float barGap = 4.f;
+
+                        /* CPA bar */
+                        float cpa_h = (val_cpa / 4.f) * chartH;
+                        float bar_x = slotCX - barW - barGap * 0.5f;
+                        float bar_y = (y + padT + chartH) - cpa_h;
+                        DrawRectangleRec((Rectangle){bar_x, bar_y, barW, cpa_h}, (Color){ 238, 99, 66, 255 });
+
+                        /* CPA value label */
+                        char val_str[16];
+                        snprintf(val_str, sizeof(val_str), "%.2f", val_cpa);
+                        float tw = MeasureTextEx(gFonts[0], val_str, 9.f * gFontScale, 1.f).x;
+                        DrawTextEx(gFonts[0], val_str, (Vector2){bar_x + barW*0.5f - tw*0.5f, bar_y - 12.f}, 9.f * gFontScale, 1.f, (Color){ 238, 99, 66, 255 });
+
+                        /* GPA bar */
+                        float gpa_h = (val_gpa / 4.f) * chartH;
+                        float bar2_x = slotCX + barGap * 0.5f;
+                        float bar2_y = (y + padT + chartH) - gpa_h;
+                        DrawRectangleRec((Rectangle){bar2_x, bar2_y, barW, gpa_h}, (Color){ 102, 186, 183, 255 });
+
+                        /* GPA value label */
+                        snprintf(val_str, sizeof(val_str), "%.2f", val_gpa);
+                        tw = MeasureTextEx(gFonts[0], val_str, 9.f * gFontScale, 1.f).x;
+                        DrawTextEx(gFonts[0], val_str, (Vector2){bar2_x + barW*0.5f - tw*0.5f, bar2_y - 12.f}, 9.f * gFontScale, 1.f, (Color){ 102, 186, 183, 255 });
+
+                        /* Student name */
+                        tw = MeasureTextEx(gFonts[0], name, 11.f * gFontScale, 1.f).x;
+                        DrawTextEx(gFonts[0], name, (Vector2){slotCX - tw*0.5f, y + padT + chartH + 8.f}, 11.f * gFontScale, 1.f, Rc(C_TEXT));
+                    } else {
+                        /* Empty slot text */
+                        const char *emp = "(Empty Slot)";
+                        float tw = MeasureTextEx(gFonts[0], emp, 10.f * gFontScale, 1.f).x;
+                        DrawTextEx(gFonts[0], emp, (Vector2){slotCX - tw*0.5f, y + padT + chartH * 0.5f}, 10.f * gFontScale, 1.f, Rc(C_SUBTEXT));
+                    }
+                }
+
+                /* Legend */
+                float legX = x + w - 160.f;
+                DrawRectangle(legX, y + 6.f, 10, 10, (Color){ 238, 99, 66, 255 });
+                DrawTextEx(gFonts[0], "CPA", (Vector2){legX + 15.f, y + 6.f}, 10.f * gFontScale, 1.f, Rc(C_TEXT));
+                DrawRectangle(legX + 60.f, y + 6.f, 10, 10, (Color){ 102, 186, 183, 255 });
+                DrawTextEx(gFonts[0], "GPA", (Vector2){legX + 75.f, y + 6.f}, 10.f * gFontScale, 1.f, Rc(C_TEXT));
+            }
+
+            /* 2. Category Completion Progress Chart */
+            Clay_ElementData cd = Clay_GetElementData(
+                Clay_GetElementId(CLAY_STRING(COMP_CHART_CATEGORIES_ID)));
+            if (cd.found && cd.boundingBox.width > 20.f) {
+                float x = cd.boundingBox.x;
+                float y = cd.boundingBox.y;
+                float w = cd.boundingBox.width;
+                float h = cd.boundingBox.height;
+
+                float padL = 170.f;
+                float padR = 72.f;
+                float padT = 20.f;
+                float padB = 30.f;
+
+                float chartW = w - padL - padR;
+                float chartH = h - padT - padB;
+
+                /* active categories list */
+                int active_categories[16];
+                int active_cat_count = 0;
+                for (int t = 1; t < sizeSubjectType; t++) {
+                    if (gTypeName[t][0] == 0) continue;
+                    active_categories[active_cat_count++] = t;
+                }
+
+                float slotH = chartH / (float)(active_cat_count > 0 ? active_cat_count : 1);
+                Color student_colors[3] = {
+                    (Color){ 41, 121, 255, 255 },  /* blue */
+                    (Color){ 255, 152, 0, 255 },   /* orange */
+                    (Color){ 76, 175, 80, 255 }    /* green */
+                };
+
+                /* find dynamic max value to scale chart */
+                float max_val = 20.f;
+                for (int c = 0; c < active_cat_count; c++) {
+                    int t = active_categories[c];
+                    for (int i = 0; i < 3; i++) {
+                        const char *name = NULL;
+                        Player *player = NULL;
+                        if (CompareGetStudent(i, &name, &player)) {
+                            /* Respect grad_config.cfg: requirement may be a fixed
+                               limit (e.g. tu_chon = 9) rather than the full pool. */
+                            float val = (float)_sl_resolve_pass(player, t);
+                            if (val > max_val) max_val = val;
+                            float limit = (float)_sl_resolve_limit(player, t);
+                            if (limit > max_val) max_val = limit;
+                        }
+                    }
+                }
+
+                /* zebra row backgrounds to group each category's 3 bars */
+                for (int c = 0; c < active_cat_count; c++) {
+                    if (c % 2 == 1) {
+                        float rowY = y + padT + c * slotH;
+                        DrawRectangleRec((Rectangle){x + padL, rowY, chartW, slotH}, (Color){0, 0, 0, 8});
+                    }
+                }
+
+                /* grid lines */
+                for (float val = 5.f; val <= max_val; val += 5.f) {
+                    float gridX = x + padL + (val / max_val) * chartW;
+                    DrawLineV((Vector2){gridX, y + padT}, (Vector2){gridX, y + padT + chartH}, RcA(C_BORDER, 100));
+                    char lbl[8];
+                    snprintf(lbl, sizeof(lbl), "%.0f", val);
+                    float tw = MeasureTextEx(gFonts[0], lbl, 9.f * gFontScale, 1.f).x;
+                    DrawTextEx(gFonts[0], lbl, (Vector2){gridX - tw*0.5f, y + padT + chartH + 5.f}, 9.f * gFontScale, 1.f, Rc(C_SUBTEXT));
+                }
+
+                /* Y-axis line */
+                DrawLineV((Vector2){x + padL, y + padT}, (Vector2){x + padL, y + padT + chartH}, Rc(C_BORDER));
+
+                /* draw bars per category */
+                for (int c = 0; c < active_cat_count; c++) {
+                    int t = active_categories[c];
+                    float slotCY = y + padT + c * slotH + slotH * 0.5f;
+
+                    /* Category label */
+                    float tw = MeasureTextEx(gFonts[0], gTypeName[t], 10.f * gFontScale, 1.f).x;
+                    DrawTextEx(gFonts[0], gTypeName[t], (Vector2){x + padL - tw - 10.f, slotCY - 5.f}, 10.f * gFontScale, 1.f, Rc(C_TEXT));
+
+                    /* Draw horizontal bars for each loaded student */
+                    float barH = slotH * 0.22f;
+                    if (barH > 11.f) barH = 11.f;
+                    if (barH < 3.f) barH = 3.f;
+                    float barGap = 3.f;
+                    float groupH = 3.f * barH + 2.f * barGap;
+
+                    for (int i = 0; i < 3; i++) {
+                        const char *name = NULL;
+                        Player *player = NULL;
+                        if (CompareGetStudent(i, &name, &player)) {
+                            /* Use grad_config.cfg requirement as the denominator,
+                               so fixed-limit types (e.g. tu_chon = 9) and
+                               subject-count types track toward their actual rule
+                               instead of the full credit pool. */
+                            float completed = (float)_sl_resolve_pass(player, t);
+                            float total = (float)_sl_resolve_limit(player, t);
+
+                            float barY = slotCY - groupH * 0.5f + i * (barH + barGap);
+
+                            /* faint full-length track showing the credit requirement (total) */
+                            float trackW = (total / max_val) * chartW;
+                            if (total > 0.01f) {
+                                DrawRectangleRec((Rectangle){x + padL, barY, trackW, barH}, RcA(C_BORDER, 200));
+                            }
+
+                            /* solid bar showing completed credits */
+                            float barW = (completed / max_val) * chartW;
+                            if (barW < 2.f && completed > 0.5f) barW = 2.f;
+                            DrawRectangleRec((Rectangle){x + padL, barY, barW, barH}, student_colors[i]);
+
+                            /* value label anchored just past the track end (aligns into a
+                               neat column per category instead of piling up at the axis).
+                               Skip near-zero values that would render as a cluttered "0/N". */
+                            if (completed >= 0.5f) {
+                                char val_str[16];
+                                if (total > 0.01f) {
+                                    snprintf(val_str, sizeof(val_str), "%.0f/%.0f", completed, total);
+                                } else {
+                                    snprintf(val_str, sizeof(val_str), "%.0f", completed);
+                                }
+                                float anchorW = trackW > barW ? trackW : barW;
+                                float lblX = x + padL + anchorW + 6.f;
+                                float ltw = MeasureTextEx(gFonts[0], val_str, 8.f * gFontScale, 1.f).x;
+                                if (lblX + ltw > x + w - 4.f) lblX = x + w - 4.f - ltw;
+                                Color lc = student_colors[i];
+                                lc.r = (unsigned char)(lc.r * 0.72f);
+                                lc.g = (unsigned char)(lc.g * 0.72f);
+                                lc.b = (unsigned char)(lc.b * 0.72f);
+                                DrawTextEx(gFonts[0], val_str, (Vector2){lblX, barY + barH*0.5f - 5.f}, 8.f * gFontScale, 1.f, lc);
+                            }
+                        }
+                    }
+                }
+
+                /* Legend dynamically generated from loaded students */
+                float legX = x + w - 30.f;
+                for (int i = 2; i >= 0; i--) {
+                    const char *name = NULL;
+                    Player *player = NULL;
+                    if (CompareGetStudent(i, &name, &player)) {
+                        float tw = MeasureTextEx(gFonts[0], name, 10.f * gFontScale, 1.f).x;
+                        legX -= (tw + 20.f);
+                        DrawRectangle(legX, y + 6.f, 10, 10, student_colors[i]);
+                        DrawTextEx(gFonts[0], name, (Vector2){legX + 15.f, y + 6.f}, 10.f * gFontScale, 1.f, Rc(C_TEXT));
+                    }
+                }
+            }
+
+            /* 3. Concentric Radial Progress Rings Chart */
+            Clay_ElementData rd = Clay_GetElementData(
+                Clay_GetElementId(CLAY_STRING(COMP_CHART_RINGS_ID)));
+            if (rd.found && rd.boundingBox.width > 20.f) {
+                float x = rd.boundingBox.x;
+                float y = rd.boundingBox.y;
+                float w = rd.boundingBox.width;
+                float h = rd.boundingBox.height;
+
+                Color student_colors[3] = {
+                    (Color){ 41, 121, 255, 255 },  /* blue */
+                    (Color){ 255, 152, 0, 255 },   /* orange */
+                    (Color){ 76, 175, 80, 255 }    /* green */
+                };
+
+                /* Pre-build legend lines so we can size the panel to fit them
+                   (prevents the heading/labels from being clipped at the edge). */
+                const char *legHeading = "Overall Graduation Progress";
+                char legLines[3][80];
+                for (int i = 0; i < 3; i++) {
+                    const char *nm = NULL;
+                    Player *pl = NULL;
+                    if (CompareGetStudent(i, &nm, &pl)) {
+                        int comp = calc_effective_credits(pl);
+                        int tot  = calc_required_credits(pl);
+                        int pct  = tot > 0 ? (int)(((float)comp / (float)tot) * 100.f) : 0;
+                        snprintf(legLines[i], sizeof(legLines[i]), "%s  %d/%d (%d%%)", nm, comp, tot, pct);
+                    } else {
+                        snprintf(legLines[i], sizeof(legLines[i]), "Slot %d  (Empty)", i + 1);
+                    }
+                }
+                float legMaxW = MeasureTextEx(gFonts[0], legHeading, 12.f * gFontScale, 1.f).x;
+                for (int i = 0; i < 3; i++) {
+                    float lw = 20.f + MeasureTextEx(gFonts[0], legLines[i], 11.f * gFontScale, 1.f).x;
+                    if (lw > legMaxW) legMaxW = lw;
+                }
+
+                float padL = 20.f;
+                float padR = legMaxW + 56.f; /* legend panel width + breathing room */
+                float padT = 20.f;
+                float padB = 20.f;
+
+                float chartW = w - padL - padR;
+                float chartH = h - padT - padB;
+
+                float cx = x + padL + chartW * 0.5f;
+                float cy = y + padT + chartH * 0.5f;
+
+                float maxR = (chartW < chartH ? chartW : chartH) * 0.46f;
+                if (maxR < 20.f) maxR = 20.f;
+
+                float ring_thickness = maxR * 0.16f;
+                if (ring_thickness > 20.f) ring_thickness = 20.f;
+                if (ring_thickness < 8.f)  ring_thickness = 8.f;
+                float ring_gap = ring_thickness * 0.4f;
+
+                /* Draw 3 background rings and progress rings */
+                for (int i = 0; i < 3; i++) {
+                    float R = maxR - i * (ring_thickness + ring_gap);
+                    if (R - ring_thickness < 5.f) break;
+
+                    /* 1. Background ring */
+                    DrawRing((Vector2){cx, cy}, R - ring_thickness, R, 0.f, 360.f, 48, Rc(C_BORDER));
+
+                    /* 2. Progress ring if student loaded */
+                    const char *name = NULL;
+                    Player *player = NULL;
+                    if (CompareGetStudent(i, &name, &player)) {
+                        int completed = calc_effective_credits(player);
+                        int total = calc_required_credits(player);
+                        float pct = total > 0 ? (float)completed / (float)total : 0.f;
+                        if (pct > 1.f) pct = 1.f;
+                        if (pct < 0.f) pct = 0.f;
+
+                        float sweep = 360.f * pct;
+                        if (pct > 0.01f) {
+                            DrawRing((Vector2){cx, cy}, R - ring_thickness, R, -90.f, -90.f + sweep, 48, student_colors[i]);
+                            
+                            /* Draw rounded caps for the progress ring arc (starts at -90 deg) */
+                            float r_mid = R - ring_thickness * 0.5f;
+                            float rad_start = -90.f * (3.14159265f / 180.f);
+                            float rad_end = (-90.f + sweep) * (3.14159265f / 180.f);
+                            DrawCircleV((Vector2){ cx + cosf(rad_start) * r_mid, cy + sinf(rad_start) * r_mid }, ring_thickness * 0.5f, student_colors[i]);
+                            DrawCircleV((Vector2){ cx + cosf(rad_end) * r_mid, cy + sinf(rad_end) * r_mid }, ring_thickness * 0.5f, student_colors[i]);
+                        }
+                    }
+                }
+
+                /* Legend panel, vertically centred against the rings */
+                float legBlockH = 26.f + 3.f * 24.f;
+                float legX = x + w - padR + 16.f;
+                float legY = cy - legBlockH * 0.5f;
+                DrawTextEx(gFonts[0], legHeading, (Vector2){legX, legY}, 12.f * gFontScale, 1.f, Rc(C_TEXT));
+                legY += 26.f;
+
+                for (int i = 0; i < 3; i++) {
+                    const char *lnm = NULL;
+                    Player *lpl = NULL;
+                    int loaded = CompareGetStudent(i, &lnm, &lpl);
+                    Color sw = loaded ? student_colors[i] : Rc(C_BORDER);
+                    Color tx = loaded ? Rc(C_TEXT) : Rc(C_SUBTEXT);
+                    DrawRectangle(legX, legY + 2.f, 12, 12, sw);
+                    DrawTextEx(gFonts[0], legLines[i], (Vector2){legX + 20.f, legY}, 11.f * gFontScale, 1.f, tx);
+                    legY += 24.f;
+                }
+            }
+        }
+
         /* FPS counter */
         char fps[32];
         snprintf(fps, sizeof(fps), "FPS: %d", GetFPS());
         DrawTextEx(gFonts[0], fps,
                    (Vector2){ (float)(gScreenW - 80), 6.f }, 14.f, 1.f,
-                   (Color){ 122, 116, 104, 150 });
+                   RcA(C_SUBTEXT, 150));
         EndDrawing();
     }
 }

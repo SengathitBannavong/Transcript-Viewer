@@ -108,6 +108,11 @@ typedef struct AppContext {
     SandboxOverride draft_overrides[128];
     int draft_override_count;
     bool sandbox_dirty;
+
+    /* 12. Student Comparison State */
+    bool compare_focused;
+    char compare_input[32];
+    int  compare_input_len;
 } AppContext;
 
 /* Global Singleton Instance */
