@@ -3691,6 +3691,16 @@ void RenderResultToast(void)
  *  PORTAL IMPORT POPUP
  * ═══════════════════════════════════════════════════════════════════════ */
 
+static char *trim_space(char *s)
+{
+    while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') s++;
+    int l = (int)strlen(s);
+    while (l > 0 && (s[l-1] == ' ' || s[l-1] == '\t' || s[l-1] == '\r' || s[l-1] == '\n')) {
+        s[--l] = '\0';
+    }
+    return s;
+}
+
 static int ImportPortalGrades(const char *text)
 {
     if (!text || strlen(text) == 0) return 0;
@@ -3707,80 +3717,146 @@ static int ImportPortalGrades(const char *text)
     while (line_token) {
         char *line_copy = strdup(line_token);
         if (line_copy) {
-            char *word_saveptr = NULL;
-            char *word = strtok_r(line_copy, " \t", &word_saveptr);
+            bool has_tab = (strchr(line_copy, '\t') != NULL);
             
             char code[32] = {0};
-            bool found_code = false;
+            float mid = -1.f;
+            float fin = -1.f;
+            bool success = false;
             
-            float vals[16];
-            int n_vals = 0;
-            
-            while (word) {
-                int wl = (int)strlen(word);
-                while (wl > 0 && (word[wl-1] == ',' || word[wl-1] == ';' || word[wl-1] == ':')) {
-                    word[--wl] = '\0';
+            if (has_tab) {
+                /* Tab-separated parser: perfect for portal copy-paste */
+                char *cols[16];
+                int n_cols = 0;
+                char *p = line_copy;
+                cols[n_cols++] = p;
+                while (*p) {
+                    if (*p == '\t') {
+                        *p = '\0';
+                        if (n_cols < 16) {
+                            cols[n_cols++] = p + 1;
+                        }
+                    }
+                    p++;
                 }
                 
-                if (!found_code && wl >= 5 && wl <= 10) {
-                    int alpha_count = 0;
-                    int digit_count = 0;
-                    for (int i = 0; i < wl; i++) {
-                        if (word[i] >= 'A' && word[i] <= 'Z') alpha_count++;
-                        else if (word[i] >= '0' && word[i] <= '9') digit_count++;
+                if (n_cols >= 5) {
+                    char *c = trim_space(cols[1]);
+                    strncpy(code, c, sizeof(code) - 1);
+                    code[sizeof(code) - 1] = '\0';
+                    
+                    for (int i = 0; code[i]; i++) {
+                        if (code[i] >= 'a' && code[i] <= 'z') code[i] -= 32;
                     }
-                    if (alpha_count >= 2 && digit_count >= 3) {
-                        strncpy(code, word, sizeof(code) - 1);
-                        for (int i = 0; code[i]; i++) {
-                            if (code[i] >= 'a' && code[i] <= 'z') code[i] -= 32;
+                    
+                    if (DB_SubjectExists(code)) {
+                        int credits = DB_GetSubjectCredits(code);
+                        char *mid_str = (n_cols > 5) ? trim_space(cols[5]) : "";
+                        char *fin_str = (n_cols > 6) ? trim_space(cols[6]) : "";
+                        
+                        if (strlen(mid_str) > 0) {
+                            char *endptr = NULL;
+                            float v = (float)strtod(mid_str, &endptr);
+                            if (endptr != mid_str) mid = v;
                         }
-                        if (DB_SubjectExists(code)) {
-                            found_code = true;
+                        if (strlen(fin_str) > 0) {
+                            char *endptr = NULL;
+                            float v = (float)strtod(fin_str, &endptr);
+                            if (endptr != fin_str) fin = v;
                         }
-                    }
-                } else if (found_code) {
-                    char *endptr = NULL;
-                    float v = (float)strtod(word, &endptr);
-                    if (endptr != word && *endptr == '\0') {
-                        if (n_vals < 16) {
-                            vals[n_vals++] = v;
+                        
+                        if (mid >= 0.f || fin >= 0.f) {
+                            if (credits == 0) {
+                                float single_score = (mid >= 0.f) ? mid : fin;
+                                mid = single_score;
+                                fin = single_score;
+                            } else {
+                                if (mid < 0.f) mid = 0.f;
+                                if (fin < 0.f) fin = 0.f;
+                            }
+                            success = true;
                         }
                     }
                 }
-                word = strtok_r(NULL, " \t", &word_saveptr);
+            } else {
+                /* Fallback space-separated tokenization parser */
+                char *word_saveptr = NULL;
+                char *word = strtok_r(line_copy, " \t", &word_saveptr);
+                bool found_code = false;
+                float vals[16];
+                int n_vals = 0;
+                
+                while (word) {
+                    int wl = (int)strlen(word);
+                    while (wl > 0 && (word[wl-1] == ',' || word[wl-1] == ';' || word[wl-1] == ':')) {
+                        word[--wl] = '\0';
+                    }
+                    
+                    if (!found_code && wl >= 5 && wl <= 10) {
+                        int alpha_count = 0;
+                        int digit_count = 0;
+                        for (int i = 0; i < wl; i++) {
+                            if (word[i] >= 'A' && word[i] <= 'Z') alpha_count++;
+                            else if (word[i] >= '0' && word[i] <= '9') digit_count++;
+                        }
+                        if (alpha_count >= 2 && digit_count >= 3) {
+                            strncpy(code, word, sizeof(code) - 1);
+                            for (int i = 0; code[i]; i++) {
+                                if (code[i] >= 'a' && code[i] <= 'z') code[i] -= 32;
+                            }
+                            if (DB_SubjectExists(code)) {
+                                found_code = true;
+                            }
+                        }
+                    } else if (found_code) {
+                        char *endptr = NULL;
+                        float v = (float)strtod(word, &endptr);
+                        if (endptr != word && *endptr == '\0') {
+                            if (n_vals < 16) {
+                                vals[n_vals++] = v;
+                            }
+                        }
+                    }
+                    word = strtok_r(NULL, " \t", &word_saveptr);
+                }
+                
+                if (found_code && n_vals > 0) {
+                    int credits = DB_GetSubjectCredits(code);
+                    int score_start_idx = 0;
+                    
+                    if (score_start_idx < n_vals && (int)vals[score_start_idx] == credits) {
+                        score_start_idx++;
+                    }
+                    if (score_start_idx < n_vals && vals[score_start_idx] > 100.f) {
+                        score_start_idx++;
+                    }
+                    
+                    if (score_start_idx < n_vals) {
+                        float v = vals[score_start_idx++];
+                        if (v >= 0.f && v <= 10.f) mid = v;
+                    }
+                    if (score_start_idx < n_vals) {
+                        float v = vals[score_start_idx++];
+                        if (v >= 0.f && v <= 10.f) fin = v;
+                    }
+                    
+                    if (mid >= 0.f || fin >= 0.f) {
+                        if (credits == 0) {
+                            float single_score = (mid >= 0.f) ? mid : fin;
+                            mid = single_score;
+                            fin = single_score;
+                        } else {
+                            if (mid < 0.f) mid = 0.f;
+                            if (fin < 0.f) fin = 0.f;
+                        }
+                        success = true;
+                    }
+                }
             }
             
-            if (found_code && n_vals > 0) {
-                int credits = DB_GetSubjectCredits(code);
-                int score_start_idx = 0;
-                
-                if (score_start_idx < n_vals && (int)vals[score_start_idx] == credits) {
-                    score_start_idx++;
-                }
-                
-                if (score_start_idx < n_vals && vals[score_start_idx] > 100.f) {
-                    score_start_idx++;
-                }
-                
-                float mid = -1.f;
-                float fin = -1.f;
-                
-                if (score_start_idx < n_vals) {
-                    float v = vals[score_start_idx++];
-                    if (v >= 0.f && v <= 10.f) mid = v;
-                }
-                if (score_start_idx < n_vals) {
-                    float v = vals[score_start_idx++];
-                    if (v >= 0.f && v <= 10.f) fin = v;
-                }
-                
-                if (mid >= 0.f || fin >= 0.f) {
-                    if (mid < 0.f) mid = 0.f;
-                    if (fin < 0.f) fin = 0.f;
-                    
-                    DB_UpdateScore(code, mid, fin);
-                    imported_count++;
-                }
+            if (success) {
+                DB_UpdateScore(code, mid, fin);
+                imported_count++;
             }
             free(line_copy);
         }

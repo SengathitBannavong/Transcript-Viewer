@@ -714,6 +714,16 @@ void DB_Query(Player *player)
 int DB_UpdateScoreRatio(const char *code, float mid_, float final_, int ratio_sel)
 {
     if (!gDB || !code) return 0;
+
+    int credits = DB_GetSubjectCredits(code);
+    if (credits == 0) {
+        if (mid_ > 0.f && final_ <= 0.f) {
+            final_ = mid_;
+        } else if (final_ > 0.f && mid_ <= 0.f) {
+            mid_ = final_;
+        }
+    }
+
     float rm, rf;
     switch (ratio_sel) {
         case 1:  rm = 0.5f; rf = 0.5f; break;  /* 50 / 50 */
