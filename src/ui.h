@@ -9,6 +9,7 @@
 
 #define BP_MOBILE   900
 #define NAV_PLANNER (sizeSubjectType)
+#define NAV_SETTINGS (sizeSubjectType + 1)
 
 /* Spacing scale */
 #define SP_XS   4
@@ -52,6 +53,7 @@ void RenderTopBar(void);
 void RenderSidebar(void);
 void RenderDashboard(void);
 void RenderPlanner(void);
+void RenderSettings(void);
 void RenderMainContent(void);
 void RenderNameInput(void);
 void RenderDrawer(void);

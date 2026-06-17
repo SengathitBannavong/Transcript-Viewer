@@ -44,7 +44,11 @@ typedef enum {
     modunVI  = 11,        /* extra slot; unused modules stay empty             */
     thuc_tap = 12,        /* internship                                        */
     do_an_tot_nghiep = 13,/* thesis / graduation project                       */
-    sizeSubjectType = 14  /* total array size (index 0 unused)                 */
+    modunVII = 14,        /* extra modules added by request                    */
+    modunVIII = 15,
+    modunIX = 16,
+    modunX = 17,
+    sizeSubjectType = 18  /* total array size (index 0 unused)                 */
 } index_subject_type;
 
 typedef struct Player {

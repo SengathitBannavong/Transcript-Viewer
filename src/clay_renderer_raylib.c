@@ -101,9 +101,11 @@ Clay_Dimensions Raylib_MeasureText(Clay_StringSlice text, Clay_TextElementConfig
 
     float scaleFactor = config->fontSize/(float)fontToUse.baseSize;
 
+    int lineCount = 1;
     for (int i = 0; i < text.length; ++i, lineCharCount++)
     {
         if (text.chars[i] == '\n') {
+            lineCount++;
             maxTextWidth = fmax(maxTextWidth, lineTextWidth);
             maxLineCharCount = CLAY__MAX(maxLineCharCount, lineCharCount);
             lineTextWidth = 0;
@@ -119,7 +121,7 @@ Clay_Dimensions Raylib_MeasureText(Clay_StringSlice text, Clay_TextElementConfig
     maxLineCharCount = CLAY__MAX(maxLineCharCount, lineCharCount);
 
     textSize.width = maxTextWidth * scaleFactor + (lineCharCount * config->letterSpacing);
-    textSize.height = textHeight;
+    textSize.height = config->fontSize * lineCount;
 
     return textSize;
 }

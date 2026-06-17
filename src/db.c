@@ -336,25 +336,28 @@ void DB_LoadScores_Test(void)
  * ───────────────────────────────────────────────────────────────────────── */
 void DB_SeedGradRules(void)
 {
-    /* Fallback defaults matching the IT major layout (sizeSubjectType=14, IDs 1-13)
+    /* Fallback defaults matching the IT major layout (sizeSubjectType=18, IDs 1-17)
      * Index 0 is the unused reserved slot. */
     static const int def_mode [sizeSubjectType] = {
-        0,           /* [0] unused                  */
-        0,0,2,0,1,   /* [1-5]  fixed required types */
-        0,0,0,0,0,0, /* [6-11] module slots         */
-        0,0          /* [12-13] thuc_tap, do_an     */
+        0,              /* [0] unused                   */
+        0,0,2,0,1,      /* [1-5]  fixed required types  */
+        0,0,0,0,0,0,    /* [6-11] module slots (I-VI)   */
+        0,0,            /* [12-13] thuc_tap, do_an      */
+        0,0,0,0         /* [14-17] modules VII-X        */
     };
     static const int def_limit[sizeSubjectType] = {
         0,
         0,0,4,0,9,
         0,0,0,0,0,0,
-        0,0
+        0,0,
+        0,0,0,0
     };
     static const int def_group[sizeSubjectType] = {
         0,
         0,0,0,0,0,
         1,1,1,2,2,0,
-        0,0
+        0,0,
+        0,0,0,0
     };
 
     sqlite3_stmt *stmt = NULL;
@@ -969,3 +972,75 @@ int DB_ImportFile(const char *username, const char *src)
     return 1;
 }
 #endif /* PLATFORM_WEB */
+
+int DB_UpdateGradRule(int type_id, int mode, int limit_val, int group_id)
+{
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(gDB,
+        "UPDATE grad_rules SET mode=?, limit_val=?, group_id=?"
+        " WHERE type_id=?;",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) return 0;
+    sqlite3_bind_int(stmt, 1, mode);
+    sqlite3_bind_int(stmt, 2, limit_val);
+    sqlite3_bind_int(stmt, 3, group_id);
+    sqlite3_bind_int(stmt, 4, type_id);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return (rc == SQLITE_DONE) ? 1 : 0;
+}
+
+int DB_SaveGradConfig(const char *path)
+{
+    FILE *f = fopen(path, "r");
+    char *lines[128];
+    int line_count = 0;
+
+    if (f) {
+        char line[256];
+        while (fgets(line, sizeof(line), f) && line_count < 128) {
+            lines[line_count++] = strdup(line);
+        }
+        fclose(f);
+    } else {
+        return 0;
+    }
+
+    FILE *out = fopen(path, "w");
+    if (!out) {
+        for (int i = 0; i < line_count; i++) free(lines[i]);
+        return 0;
+    }
+
+    for (int i = 0; i < line_count; i++) {
+        int start = 0;
+        while (lines[i][start] == ' ' || lines[i][start] == '\t') start++;
+
+        int type_id = -1, mode = 0, limit_val = 0, group_id = 0;
+        if (lines[i][start] != '#' && lines[i][start] != '\0' &&
+            lines[i][start] != '\n' && lines[i][start] != '\r') {
+            if (sscanf(lines[i] + start, "%d %d %d %d", &type_id, &mode, &limit_val, &group_id) >= 2) {
+                if (type_id >= 1 && type_id < sizeSubjectType) {
+                    char *hash = strchr(lines[i], '#');
+                    if (hash) {
+                        fprintf(out, "%-12d %-6d %-7d %-8d %s",
+                                type_id, gGradRules[type_id].mode,
+                                gGradRules[type_id].limit_val,
+                                gGradRules[type_id].group_id, hash);
+                    } else {
+                        fprintf(out, "%-12d %-6d %-7d %d\n",
+                                type_id, gGradRules[type_id].mode,
+                                gGradRules[type_id].limit_val,
+                                gGradRules[type_id].group_id);
+                    }
+                    free(lines[i]);
+                    continue;
+                }
+            }
+        }
+        fprintf(out, "%s", lines[i]);
+        free(lines[i]);
+    }
+    fclose(out);
+    return 1;
+}

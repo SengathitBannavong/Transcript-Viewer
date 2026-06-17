@@ -245,6 +245,8 @@ static void BuildLayout(void)
                 RenderDashboard();
             else if (gActiveNav == NAV_PLANNER)
                 RenderPlanner();
+            else if (gActiveNav == NAV_SETTINGS)
+                RenderSettings();
             else
                 RenderMainContent();
         }

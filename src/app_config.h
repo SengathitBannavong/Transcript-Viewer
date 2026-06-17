@@ -18,3 +18,4 @@ AppConfig AppConfig_Default(void);
 AppConfig AppConfig_Load(const char *path);
 FontLoadResult AppConfig_LoadFont(const char *path);
 void AppConfig_DrawMissingFontScreen(void);
+bool AppConfig_Save(const char *path, float font_scale, int target_fps);

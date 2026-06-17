@@ -114,3 +114,55 @@ void AppConfig_DrawMissingFontScreen(void)
         EndDrawing();
     }
 }
+
+bool AppConfig_Save(const char *path, float font_scale, int target_fps)
+{
+    FILE *f = fopen(path, "r");
+    char *lines[100];
+    int line_count = 0;
+
+    if (f) {
+        char line[256];
+        while (fgets(line, sizeof(line), f) && line_count < 100) {
+            lines[line_count++] = strdup(line);
+        }
+        fclose(f);
+    } else {
+        lines[line_count++] = strdup("# ui.cfg\n");
+        lines[line_count++] = strdup("font_scale 1.8\n");
+        lines[line_count++] = strdup("target_fps 60\n");
+    }
+
+    FILE *out = fopen(path, "w");
+    if (!out) {
+        for (int i = 0; i < line_count; i++) free(lines[i]);
+        return false;
+    }
+
+    for (int i = 0; i < line_count; i++) {
+        int start = 0;
+        while (lines[i][start] == ' ' || lines[i][start] == '\t') start++;
+
+        char key[64] = {0};
+        float val = 0.f;
+
+        if (lines[i][start] != '#' && lines[i][start] != '\0' &&
+            lines[i][start] != '\n' && lines[i][start] != '\r') {
+            if (sscanf(lines[i] + start, "%63s %f", key, &val) == 2) {
+                if (strcmp(key, "font_scale") == 0) {
+                    fprintf(out, "font_scale %.1f\n", font_scale);
+                    free(lines[i]);
+                    continue;
+                } else if (strcmp(key, "target_fps") == 0) {
+                    fprintf(out, "target_fps %d\n", target_fps);
+                    free(lines[i]);
+                    continue;
+                }
+            }
+        }
+        fprintf(out, "%s", lines[i]);
+        free(lines[i]);
+    }
+    fclose(out);
+    return true;
+}
