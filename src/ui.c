@@ -788,7 +788,7 @@ static void RenderTableRow(Subject_Node *node, int idx)
             gEditError[0] = '\0';
             gEditOpen  = true;
             gEditField = 0;
-            gEditRatio = 3;
+            gEditRatio = 1;
             strncpy(gEditCode, node->ID,   MAXSIZEID - 1);
             gEditCode[MAXSIZEID - 1] = '\0';
             strncpy(gEditSubjectName, node->name, MAXSIZENAME - 1);
@@ -3893,6 +3893,7 @@ static int ImportPortalGrades(const char *text)
             char code[32] = {0};
             float mid = -1.f;
             float fin = -1.f;
+            char pasted_letter[16] = {0};
             bool success = false;
             
             if (has_tab) {
@@ -3947,6 +3948,25 @@ static int ImportPortalGrades(const char *text)
                             }
                             success = true;
                         }
+
+                        // Try to find a pasted letter grade column
+                        for (int i = 2; i < n_cols; i++) {
+                            char *col_trim = trim_space(cols[i]);
+                            char temp[16];
+                            strncpy(temp, col_trim, sizeof(temp) - 1);
+                            temp[sizeof(temp) - 1] = '\0';
+                            for (int k = 0; temp[k]; k++) {
+                                if (temp[k] >= 'a' && temp[k] <= 'z') temp[k] -= 32;
+                            }
+                            if (strcmp(temp, "A+") == 0 || strcmp(temp, "A") == 0 ||
+                                strcmp(temp, "B+") == 0 || strcmp(temp, "B") == 0 ||
+                                strcmp(temp, "C+") == 0 || strcmp(temp, "C") == 0 ||
+                                strcmp(temp, "D+") == 0 || strcmp(temp, "D") == 0 ||
+                                strcmp(temp, "F") == 0) {
+                                snprintf(pasted_letter, sizeof(pasted_letter), "%s", temp);
+                                break;
+                            }
+                        }
                     }
                 }
             } else {
@@ -3985,6 +4005,21 @@ static int ImportPortalGrades(const char *text)
                         if (endptr != word && *endptr == '\0') {
                             if (n_vals < 16) {
                                 vals[n_vals++] = v;
+                            }
+                        } else {
+                            // Non-float word: check if it's a letter grade
+                            char temp[16];
+                            strncpy(temp, word, sizeof(temp) - 1);
+                            temp[sizeof(temp) - 1] = '\0';
+                            for (int k = 0; temp[k]; k++) {
+                                if (temp[k] >= 'a' && temp[k] <= 'z') temp[k] -= 32;
+                            }
+                            if (strcmp(temp, "A+") == 0 || strcmp(temp, "A") == 0 ||
+                                strcmp(temp, "B+") == 0 || strcmp(temp, "B") == 0 ||
+                                strcmp(temp, "C+") == 0 || strcmp(temp, "C") == 0 ||
+                                strcmp(temp, "D+") == 0 || strcmp(temp, "D") == 0 ||
+                                strcmp(temp, "F") == 0) {
+                                snprintf(pasted_letter, sizeof(pasted_letter), "%s", temp);
                             }
                         }
                     }
@@ -4026,7 +4061,22 @@ static int ImportPortalGrades(const char *text)
             }
             
             if (success) {
-                DB_UpdateScore(code, mid, fin);
+                int best_ratio = 1; // Default fallback to 1 (50-50) since 50-50 is default now
+                if (pasted_letter[0] != '\0') {
+                    // Try to find which ratio selection (50-50, 40-60, 30-70) matches the pasted grade
+                    for (int r_sel = 1; r_sel <= 3; r_sel++) {
+                        float rm, rf;
+                        if (r_sel == 1) { rm = 0.5f; rf = 0.5f; }
+                        else if (r_sel == 2) { rm = 0.4f; rf = 0.6f; }
+                        else { rm = 0.3f; rf = 0.7f; }
+                        const char *computed = db_compute_letter_r(mid, fin, rm, rf);
+                        if (strcmp(computed, pasted_letter) == 0) {
+                            best_ratio = r_sel;
+                            break;
+                        }
+                    }
+                }
+                DB_UpdateScoreRatio(code, mid, fin, best_ratio);
                 imported_count++;
             }
             free(line_copy);
