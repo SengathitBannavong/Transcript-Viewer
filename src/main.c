@@ -311,6 +311,7 @@ int main(void)
     gFontScale = appConfig.font_scale;
     gTargetFPS = appConfig.target_fps;
     gApp.theme_id = appConfig.theme_id;
+    Theme_Apply(gApp.theme_id);
 
     FontLoadResult fontLoad = AppConfig_LoadFont("assets/fonts.cfg");
     if (!fontLoad.has_configured_candidates) {
