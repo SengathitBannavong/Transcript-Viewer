@@ -113,6 +113,10 @@ typedef struct AppContext {
     bool compare_focused;
     char compare_input[32];
     int  compare_input_len;
+
+    /* 13. Per-Term Attempt Cache (By Term page) — rebuilt on RefreshPlayer */
+    AttemptRow attempts[MAX_ATTEMPTS];
+    int        attempt_count;
 } AppContext;
 
 /* Global Singleton Instance */

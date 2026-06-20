@@ -11,6 +11,7 @@
 #define NAV_PLANNER (sizeSubjectType)
 #define NAV_SETTINGS (sizeSubjectType + 1)
 #define NAV_COMPARE (sizeSubjectType + 2)
+#define NAV_TERMS (sizeSubjectType + 3)
 
 /* Spacing scale */
 #define SP_XS   4
@@ -26,6 +27,11 @@
 #define COMP_CHART_STATS_ID      "CompChartStats"
 #define COMP_CHART_CATEGORIES_ID "CompChartCategories"
 #define COMP_CHART_RINGS_ID      "CompChartRings"
+#define TERM_CHART_REG_ID     "TermChartReg"      /* credits registered / term (h-bar) */
+#define TERM_CHART_PASS_ID    "TermChartPass"     /* credits passed / term (bar) */
+#define TERM_CHART_CUMCRED_ID "TermChartCumCred"  /* cumulative credits (line)   */
+#define TERM_CHART_GPA_ID     "TermChartGPA"      /* semester GPA (line)         */
+#define TERM_CHART_CPA_ID     "TermChartCPA"      /* cumulative CPA (line)       */
 
 /* Themes */
 typedef struct {
@@ -84,6 +90,7 @@ void RenderSidebar(void);
 void RenderDashboard(void);
 void RenderPlanner(void);
 void RenderSettings(void);
+void RenderTermsPage(void);
 void RenderMainContent(void);
 void RenderNameInput(void);
 void RenderDrawer(void);

@@ -5,6 +5,20 @@
 #define MAXSIZEID 26
 #define MAX_COLUMNS 10
 #define MAX_COLUMN_WIDTH 56
+#define MAX_ATTEMPTS 300
+
+/* One enrollment attempt of one subject in one term (By Term page).
+ * Source of truth lives in the score_attempts table; this is the cached
+ * render row. The same subject can have several attempts across terms. */
+typedef struct {
+    int   term;      /* enrollment term code, e.g. 20231 (year + semester) */
+    char  code[MAXSIZEID];
+    char  name[MAXSIZENAME];
+    int   credit;
+    float mid;
+    float final_;
+    char  letter[4]; /* portal-supplied letter, authoritative */
+} AttemptRow;
 
 typedef struct Subject_Node {
     char name[MAXSIZENAME];

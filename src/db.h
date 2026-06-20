@@ -13,6 +13,7 @@ int DB_Exists(const char *username);
 int DB_Open(const char *username);
 void db_exec(const char *sql);
 void DB_CreateSchema(void);
+void DB_Migrate(void);
 void DB_SeedFromDat(void);
 void DB_LoadScores_Test(void);
 void DB_SeedGradRules(void);
@@ -24,8 +25,20 @@ void DB_Query(Player *player);
 int DB_UpdateScore(const char *code, float mid, float final_);
 int DB_UpdateScoreRatio(const char *code, float mid, float final_, int ratio_sel);
 int DB_ClearScore(const char *code);
+/* Editor-facing: attempt-aware edit/clear (writes back to score_attempts when
+ * the subject has imported attempts, else falls back to the planning row). */
+int DB_EditSubjectScore(const char *code, float mid, float final_, int ratio_sel);
+int DB_ClearSubjectScore(const char *code);
 int DB_SubjectExists(const char *code);
 int DB_GetSubjectCredits(const char *code);
+
+/* Per-term attempts (score_attempts) — source of truth for retakes */
+void DB_ClearAttempts(void);
+int  DB_InsertAttempt(const char *code, int term, int classid,
+                      float mid, float final_, const char *letter);
+void DB_DeriveScoresFromAttempts(void);
+int  DB_LoadAttempts(AttemptRow *out, int max);
+int  DB_SubjectHasAttempts(const char *code);
 int DB_UpdateGradRule(int type_id, int mode, int limit_val, int group_id);
 int DB_SaveGradConfig(const char *path);
 void DB_Close(void);

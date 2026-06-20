@@ -40,6 +40,151 @@ static inline Color RcA(Clay_Color c, unsigned char a)
                     (unsigned char)c.b, a };
 }
 
+/* ── By-Term chart renderer ──────────────────────────────────────────────
+ *  Draws a simple axis chart inside `bb`: bars (bars=true) or a line+dots
+ *  series over `n` terms. `vals` are y-values; `ymax`/`ydivs` set the scale
+ *  and gridline count. `terms` label the x-axis (raw codes, e.g. 20231).
+ *  `one_dp` formats y labels with one decimal (GPA/CPA) vs integer (credits).
+ * ──────────────────────────────────────────────────────────────────────── */
+static void DrawTermChart(Clay_BoundingBox bb, const int *terms, const float *vals,
+                          int n, float ymax, int ydivs, bool bars, int one_dp)
+{
+    if (n <= 0 || ymax <= 0.f) return;
+    Color axis = Rc(C_BORDER), grid = RcA(C_BORDER, 120),
+          txt  = Rc(C_SUBTEXT), data = Rc(C_ACCENT);
+
+    const float padL = 38.f, padR = 12.f, padT = 8.f, padB = 34.f;
+    float px = bb.x + padL,            py = bb.y + padT;
+    float pw = bb.width  - padL - padR, ph = bb.height - padT - padB;
+    if (pw < 20.f || ph < 20.f) return;
+
+    float lsz = 9.f * gApp.font_scale;   /* macros aren't defined yet here */
+
+    /* horizontal gridlines + y labels */
+    for (int k = 0; k <= ydivs; k++) {
+        float yy = py + ph * (1.f - (float)k / (float)ydivs);
+        DrawLineV((Vector2){ px, yy }, (Vector2){ px + pw, yy }, grid);
+        char lbl[16];
+        float v = ymax * (float)k / (float)ydivs;
+        if (one_dp) snprintf(lbl, sizeof(lbl), "%.1f", v);
+        else        snprintf(lbl, sizeof(lbl), "%d", (int)(v + 0.5f));
+        Vector2 ts = MeasureTextEx(gApp.fonts[0], lbl, lsz, 1.f);
+        DrawTextEx(gApp.fonts[0], lbl, (Vector2){ px - ts.x - 5.f, yy - ts.y*0.5f }, lsz, 1.f, txt);
+    }
+    /* axes */
+    DrawLineEx((Vector2){ px, py }, (Vector2){ px, py + ph }, 1.5f, axis);
+    DrawLineEx((Vector2){ px, py + ph }, (Vector2){ px + pw, py + ph }, 1.5f, axis);
+
+    float slot = pw / (float)n;
+    for (int i = 0; i < n; i++) {
+        float xc = px + slot * ((float)i + 0.5f);
+        float vh = ph * (vals[i] / ymax);
+        if (vh < 0.f) vh = 0.f;
+        if (vh > ph) vh = ph;
+        float yv = py + ph - vh;
+
+        if (bars) {
+            float bw = slot * 0.42f; if (bw > 34.f) bw = 34.f;
+            DrawRectangleRec((Rectangle){ xc - bw*0.5f, yv, bw, vh }, data);
+            /* value label above the bar */
+            char vl[16];
+            if (one_dp) snprintf(vl, sizeof(vl), "%.1f", vals[i]);
+            else        snprintf(vl, sizeof(vl), "%d", (int)(vals[i] + 0.5f));
+            Vector2 vs = MeasureTextEx(gApp.fonts[0], vl, lsz, 1.f);
+            DrawTextEx(gApp.fonts[0], vl, (Vector2){ xc - vs.x*0.5f, yv - vs.y - 2.f }, lsz, 1.f, txt);
+        }
+        /* x label (raw term code), slanted to avoid overlap */
+        char tl[16];
+        snprintf(tl, sizeof(tl), "%d", terms[i]);
+        DrawTextPro(gApp.fonts[0], tl, (Vector2){ xc - 6.f, py + ph + 7.f },
+                    (Vector2){ 0, 0 }, -38.f, lsz, 1.f, txt);
+    }
+
+    if (!bars) {
+        /* line segments then vertex dots on top */
+        for (int i = 0; i + 1 < n; i++) {
+            float x1 = px + slot * ((float)i + 0.5f);
+            float x2 = px + slot * ((float)i + 1.5f);
+            float y1 = py + ph - ph * (vals[i]   / ymax);
+            float y2 = py + ph - ph * (vals[i+1] / ymax);
+            DrawLineEx((Vector2){ x1, y1 }, (Vector2){ x2, y2 }, 2.5f, data);
+        }
+        for (int i = 0; i < n; i++) {
+            float xc = px + slot * ((float)i + 0.5f);
+            float yv = py + ph - ph * (vals[i] / ymax);
+            DrawCircleV((Vector2){ xc, yv }, 4.f, data);
+            /* value label above each point */
+            char vl[16];
+            if (one_dp) snprintf(vl, sizeof(vl), "%.1f", vals[i]);
+            else        snprintf(vl, sizeof(vl), "%d", (int)(vals[i] + 0.5f));
+            Vector2 vs = MeasureTextEx(gApp.fonts[0], vl, lsz, 1.f);
+            DrawTextEx(gApp.fonts[0], vl, (Vector2){ xc - vs.x*0.5f, yv - vs.y - 5.f }, lsz, 1.f, txt);
+        }
+    }
+}
+
+/* ── Horizontal bar chart: y = term (top→bottom), x = credits ─────────────
+ *  Used for "Credits registered per term"; value labels sit at each bar end.
+ * ──────────────────────────────────────────────────────────────────────── */
+static void DrawTermChartH(Clay_BoundingBox bb, const int *terms, const int *vals,
+                           int n, float xmax, int xdivs)
+{
+    if (n <= 0 || xmax <= 0.f) return;
+    Color axis = Rc(C_BORDER), grid = RcA(C_BORDER, 120),
+          txt  = Rc(C_SUBTEXT), data = Rc(C_ACCENT);
+
+    const float padL = 46.f, padR = 30.f, padT = 8.f, padB = 22.f;
+    float px = bb.x + padL,             py = bb.y + padT;
+    float pw = bb.width  - padL - padR, ph = bb.height - padT - padB;
+    if (pw < 20.f || ph < 20.f) return;
+
+    float lsz = 9.f * gApp.font_scale;
+
+    /* vertical gridlines + x labels (credits) */
+    for (int k = 0; k <= xdivs; k++) {
+        float xx = px + pw * ((float)k / (float)xdivs);
+        DrawLineV((Vector2){ xx, py }, (Vector2){ xx, py + ph }, grid);
+        char lbl[16];
+        snprintf(lbl, sizeof(lbl), "%d", (int)(xmax * (float)k / (float)xdivs + 0.5f));
+        Vector2 ts = MeasureTextEx(gApp.fonts[0], lbl, lsz, 1.f);
+        DrawTextEx(gApp.fonts[0], lbl, (Vector2){ xx - ts.x*0.5f, py + ph + 5.f }, lsz, 1.f, txt);
+    }
+    /* axes */
+    DrawLineEx((Vector2){ px, py }, (Vector2){ px, py + ph }, 1.5f, axis);
+    DrawLineEx((Vector2){ px, py + ph }, (Vector2){ px + pw, py + ph }, 1.5f, axis);
+
+    float slot = ph / (float)n;
+    for (int i = 0; i < n; i++) {
+        float yc = py + slot * ((float)i + 0.5f);   /* earliest term at top */
+        float bw = pw * ((float)vals[i] / xmax);
+        if (bw < 0.f) bw = 0.f;
+        float bh = slot * 0.5f; if (bh > 22.f) bh = 22.f;
+        DrawRectangleRec((Rectangle){ px, yc - bh*0.5f, bw, bh }, data);
+
+        /* term label on the y-axis (right-aligned before the axis) */
+        char tl[16];
+        snprintf(tl, sizeof(tl), "%d", terms[i]);
+        Vector2 tsz = MeasureTextEx(gApp.fonts[0], tl, lsz, 1.f);
+        DrawTextEx(gApp.fonts[0], tl, (Vector2){ px - tsz.x - 5.f, yc - tsz.y*0.5f }, lsz, 1.f, txt);
+
+        /* value label at the bar end */
+        char vl[16];
+        snprintf(vl, sizeof(vl), "%d", vals[i]);
+        Vector2 vs = MeasureTextEx(gApp.fonts[0], vl, lsz, 1.f);
+        DrawTextEx(gApp.fonts[0], vl, (Vector2){ px + bw + 4.f, yc - vs.y*0.5f }, lsz, 1.f, txt);
+    }
+}
+
+/* Round an integer maximum up to a clean axis top, returning divisions too. */
+static void term_int_scale(int maxv, float *ymax, int *ydivs)
+{
+    int step = (maxv <= 10) ? 2 : (maxv <= 50) ? 10 : (maxv <= 100) ? 20 : 50;
+    int top  = ((maxv / step) + 1) * step;
+    if (top < step) top = step;
+    *ymax  = (float)top;
+    *ydivs = top / step;
+}
+
 /* Macro mappings to gApp members */
 #define gScreenW (gApp.screen_w)
 #define gScreenH (gApp.screen_h)
@@ -89,6 +234,7 @@ void RefreshPlayer(void)
 {
     DB_Query(&gPlayer);
     update_player_status(&gPlayer);
+    gApp.attempt_count = DB_LoadAttempts(gApp.attempts, MAX_ATTEMPTS);
 }
 
 void ShowToastFor(float seconds)
@@ -133,6 +279,7 @@ static void InitPlayerDB(void)
         return;
     }
     DB_CreateSchema();
+    DB_Migrate();          /* add per-term schema to legacy DBs */
     if (isNew) {
         DB_SeedFromDat();
         if (strcmp(gUserName, "test") == 0) DB_LoadScores_Test();
@@ -313,6 +460,8 @@ static void BuildLayout(void)
                 RenderSettings();
             else if (gActiveNav == NAV_COMPARE)
                 RenderCompare();
+            else if (gActiveNav == NAV_TERMS)
+                RenderTermsPage();
             else
                 RenderMainContent();
         }
@@ -737,6 +886,54 @@ static void UpdateDrawFrame(void)
             }
         }
 
+        /* ── Draw By-Term charts on top of Clay output (By Term page only) ── */
+        if (gDBReady && !gNameInput && gActiveNav == NAV_TERMS) {
+            TermSeries ts;
+            compute_term_series(gApp.attempts, gApp.attempt_count, &ts);
+            if (ts.count > 0) {
+                /* credits registered per term — horizontal bars (x=credits, y=term) */
+                Clay_ElementData rb = Clay_GetElementData(
+                    Clay_GetElementId(CLAY_STRING(TERM_CHART_REG_ID)));
+                if (rb.found && rb.boundingBox.width > 20.f) {
+                    int mx = 0;
+                    for (int i = 0; i < ts.count; i++) if (ts.reg_cred[i] > mx) mx = ts.reg_cred[i];
+                    float xm; int xd; term_int_scale(mx, &xm, &xd);
+                    DrawTermChartH(rb.boundingBox, ts.terms, ts.reg_cred, ts.count, xm, xd);
+                }
+                /* credits passed per term — bars */
+                Clay_ElementData pb = Clay_GetElementData(
+                    Clay_GetElementId(CLAY_STRING(TERM_CHART_PASS_ID)));
+                if (pb.found && pb.boundingBox.width > 20.f) {
+                    int mx = 0;
+                    for (int i = 0; i < ts.count; i++) if (ts.pass_cred[i] > mx) mx = ts.pass_cred[i];
+                    float ym; int yd; term_int_scale(mx, &ym, &yd);
+                    float vals[MAX_TERM_SERIES];
+                    for (int i = 0; i < ts.count; i++) vals[i] = (float)ts.pass_cred[i];
+                    DrawTermChart(pb.boundingBox, ts.terms, vals, ts.count, ym, yd, true, 0);
+                }
+                /* cumulative credits — line */
+                Clay_ElementData cb = Clay_GetElementData(
+                    Clay_GetElementId(CLAY_STRING(TERM_CHART_CUMCRED_ID)));
+                if (cb.found && cb.boundingBox.width > 20.f) {
+                    int mx = ts.cum_cred[ts.count - 1];
+                    float ym; int yd; term_int_scale(mx, &ym, &yd);
+                    float vals[MAX_TERM_SERIES];
+                    for (int i = 0; i < ts.count; i++) vals[i] = (float)ts.cum_cred[i];
+                    DrawTermChart(cb.boundingBox, ts.terms, vals, ts.count, ym, yd, false, 0);
+                }
+                /* GPA per term — line, fixed 0..4 scale */
+                Clay_ElementData gb = Clay_GetElementData(
+                    Clay_GetElementId(CLAY_STRING(TERM_CHART_GPA_ID)));
+                if (gb.found && gb.boundingBox.width > 20.f)
+                    DrawTermChart(gb.boundingBox, ts.terms, ts.sem_gpa, ts.count, 4.0f, 4, false, 1);
+                /* cumulative CPA — line, fixed 0..4 scale */
+                Clay_ElementData cpab = Clay_GetElementData(
+                    Clay_GetElementId(CLAY_STRING(TERM_CHART_CPA_ID)));
+                if (cpab.found && cpab.boundingBox.width > 20.f)
+                    DrawTermChart(cpab.boundingBox, ts.terms, ts.cum_cpa, ts.count, 4.0f, 4, false, 1);
+            }
+        }
+
         /* ── Draw comparison charts on top of Clay output (compare page only) ── */
         if (gDBReady && !gNameInput && gActiveNav == NAV_COMPARE) {
             /* 1. CPA & GPA Comparison Chart */
@@ -1048,7 +1245,7 @@ static void UpdateDrawFrame(void)
                         float sweep = 360.f * pct;
                         if (pct > 0.01f) {
                             DrawRing((Vector2){cx, cy}, R - ring_thickness, R, -90.f, -90.f + sweep, 48, student_colors[i]);
-                            
+
                             /* Draw rounded caps for the progress ring arc (starts at -90 deg) */
                             float r_mid = R - ring_thickness * 0.5f;
                             float rad_start = -90.f * (3.14159265f / 180.f);

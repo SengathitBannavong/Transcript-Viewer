@@ -328,6 +328,8 @@ static void RenderNavItem(int idx, const char *label, int warn)
                 CLAY_TEXT(CLAY_STRING(STR_NAV_S_BADGE), TC(active ? C_WHITE : C_SUBTEXT, 9));
             else if (idx == NAV_COMPARE)
                 CLAY_TEXT(CLAY_STRING("C"), TC(active ? C_WHITE : C_SUBTEXT, 9));
+            else if (idx == NAV_TERMS)
+                CLAY_TEXT(CLAY_STRING("T"), TC(active ? C_WHITE : C_SUBTEXT, 9));
             else
                 CLAY_TEXT(DS("%d", idx), TC(active ? C_WHITE : C_SUBTEXT, 9));
         }
@@ -407,6 +409,7 @@ void RenderSidebar(void)
         /* Dashboard + Planner — overview views, not subject types */
         RenderNavItem(0, STR_NAV_DASHBOARD, 0);
         RenderNavItem(NAV_PLANNER, STR_NAV_PLANNER, 0);
+        RenderNavItem(NAV_TERMS, "By Term", 0);
         RenderNavItem(NAV_COMPARE, "Compare Students", 0);
 
         /* one nav item per subject type — only show types that have subjects */
@@ -645,6 +648,7 @@ void RenderTopBar(void)
                           : (gActiveNav == NAV_PLANNER)  ? STR_NAV_PLANNER
                           : (gActiveNav == NAV_SETTINGS) ? "Settings"
                           : (gActiveNav == NAV_COMPARE)  ? "Compare Students"
+                          : (gActiveNav == NAV_TERMS)    ? "By Term"
                           : (gActiveNav >= 1 && gActiveNav < sizeSubjectType) ? gTypeName[gActiveNav]
                           : "";
         CLAY_TEXT(CS(title), TC(C_TEXT, 16));
@@ -966,6 +970,217 @@ static void RenderTableRow(Subject_Node *node, int idx)
 /* ═══════════════════════════════════════════════════════════════════════
  *  MAIN CONTENT
  * ═══════════════════════════════════════════════════════════════════════ */
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  By Term page — semester GPA + course list grouped by enrollment term.
+ *  Reads the cached gApp.attempts[] (sorted term ASC, code ASC). Every
+ *  attempt is shown, including retakes/F's; the semester GPA weights only
+ *  credit-bearing courses (PE 0-credit listed but excluded from GPA).
+ * ═══════════════════════════════════════════════════════════════════════ */
+void RenderTermsPage(void)
+{
+    AttemptRow *A = gApp.attempts;
+    int n = gApp.attempt_count;
+
+    CLAY(CLAY_ID("TermsPage"), {
+        .layout = {
+            .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+            .padding         = { 24, 24, 20, 20 },
+            .childGap        = SP_LG,
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+        },
+        .backgroundColor = C_BG,
+        .clip = { .vertical = true, .childOffset = Clay_GetScrollOffset() },
+    }) {
+        /* Title */
+        CLAY(CLAY_ID("TermsHdr"), {
+            .layout = { .sizing = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIT(0) },
+                        .childGap = SP_XS, .layoutDirection = CLAY_TOP_TO_BOTTOM },
+        }) {
+            CLAY_TEXT(CLAY_STRING("By Term"), TC(C_TEXT, 26));
+            CLAY_TEXT(CLAY_STRING("Semester GPA and the courses taken each term (every attempt shown, including retakes)."),
+                      TC(C_SUBTEXT, 11));
+        }
+
+        /* ── Statistics charts (drawn by main.c into these reserved boxes) ── */
+        if (n > 0) {
+            CLAY(CLAY_ID("TermChartRegCard"), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                            .padding = { 14, 14, 12, 12 }, .childGap = SP_SM,
+                            .layoutDirection = CLAY_TOP_TO_BOTTOM },
+                .backgroundColor = C_CARD, .cornerRadius = CLAY_CORNER_RADIUS(6),
+                .border = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+            }) {
+                CLAY_TEXT(CLAY_STRING("Credits registered per term"), TC(C_TEXT, 14));
+                CLAY(CLAY_ID(TERM_CHART_REG_ID), {
+                    .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(210) } },
+                }) {}
+            }
+            CLAY(CLAY_ID("TermChartPassCard"), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                            .padding = { 14, 14, 12, 12 }, .childGap = SP_SM,
+                            .layoutDirection = CLAY_TOP_TO_BOTTOM },
+                .backgroundColor = C_CARD, .cornerRadius = CLAY_CORNER_RADIUS(6),
+                .border = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+            }) {
+                CLAY_TEXT(CLAY_STRING("Credits passed per term"), TC(C_TEXT, 14));
+                CLAY(CLAY_ID(TERM_CHART_PASS_ID), {
+                    .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(190) } },
+                }) {}
+            }
+            CLAY(CLAY_ID("TermChartCumCard"), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                            .padding = { 14, 14, 12, 12 }, .childGap = SP_SM,
+                            .layoutDirection = CLAY_TOP_TO_BOTTOM },
+                .backgroundColor = C_CARD, .cornerRadius = CLAY_CORNER_RADIUS(6),
+                .border = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+            }) {
+                CLAY_TEXT(CLAY_STRING("Cumulative credits"), TC(C_TEXT, 14));
+                CLAY(CLAY_ID(TERM_CHART_CUMCRED_ID), {
+                    .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(190) } },
+                }) {}
+            }
+            CLAY(CLAY_ID("TermChartGpaCard"), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                            .padding = { 14, 14, 12, 12 }, .childGap = SP_SM,
+                            .layoutDirection = CLAY_TOP_TO_BOTTOM },
+                .backgroundColor = C_CARD, .cornerRadius = CLAY_CORNER_RADIUS(6),
+                .border = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+            }) {
+                CLAY_TEXT(CLAY_STRING("GPA per term"), TC(C_TEXT, 14));
+                CLAY(CLAY_ID(TERM_CHART_GPA_ID), {
+                    .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(190) } },
+                }) {}
+            }
+            CLAY(CLAY_ID("TermChartCpaCard"), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                            .padding = { 14, 14, 12, 12 }, .childGap = SP_SM,
+                            .layoutDirection = CLAY_TOP_TO_BOTTOM },
+                .backgroundColor = C_CARD, .cornerRadius = CLAY_CORNER_RADIUS(6),
+                .border = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+            }) {
+                CLAY_TEXT(CLAY_STRING("Cumulative CPA"), TC(C_TEXT, 14));
+                CLAY(CLAY_ID(TERM_CHART_CPA_ID), {
+                    .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(190) } },
+                }) {}
+            }
+        }
+
+        if (n == 0) {
+            CLAY(CLAY_ID("TermsEmpty"), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                            .padding = { 16, 16, 16, 16 } },
+                .backgroundColor = C_CARD,
+                .cornerRadius    = CLAY_CORNER_RADIUS(6),
+                .border = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+            }) {
+                CLAY_TEXT(CLAY_STRING("No imported terms yet. Open Import and paste your portal transcript."),
+                          TCW(C_SUBTEXT, 12));
+            }
+        }
+
+        int i = 0, term_idx = 0;
+        while (i < n) {
+            int term = A[i].term;
+
+            /* aggregate the contiguous block for this term */
+            int   j = i;
+            float sumPts = 0.f;
+            int   sumCr  = 0;
+            while (j < n && A[j].term == term) {
+                if (A[j].credit > 0) {
+                    int plus = (A[j].letter[1] == '+');
+                    sumPts += score_to_gpa(A[j].letter[0], plus) * (float)A[j].credit;
+                    sumCr  += A[j].credit;
+                }
+                j++;
+            }
+            float gpa = (sumCr > 0) ? sumPts / (float)sumCr : 0.f;
+
+            /* decode term code: YYYY (year) followed by semester digit */
+            int year = term / 10;
+            int sem  = term % 10;
+            const char *semlbl = (sem == 1) ? "HK1" : (sem == 2) ? "HK2"
+                               : (sem == 3) ? "HK he" : "HK?";
+            char label[64];
+            snprintf(label, sizeof(label), "%d-%d \xC2\xB7 %s", year, year + 1, semlbl);
+
+            CLAY(CLAY_IDI("TermCard", term_idx), {
+                .layout = {
+                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                    .padding         = { 16, 16, 12, 12 },
+                    .childGap        = SP_SM,
+                    .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                },
+                .backgroundColor = C_CARD,
+                .cornerRadius    = CLAY_CORNER_RADIUS(6),
+                .border = { .color = C_BORDER, .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+            }) {
+                /* header: term label (left), GPA + credits (right) */
+                CLAY(CLAY_IDI("TermHead", term_idx), {
+                    .layout = {
+                        .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                        .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                        .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                    },
+                }) {
+                    CLAY_TEXT(DS("%s", label), TC(C_TEXT, 16));
+                    CLAY(CLAY_IDI("TermHSp", term_idx), {
+                        .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(1) } },
+                    }) {}
+                    CLAY_TEXT(DS("GPA %.2f", gpa), TC(C_ACCENT, 16));
+                    CLAY(CLAY_IDI("TermHGap", term_idx), {
+                        .layout = { .sizing = { CLAY_SIZING_FIXED(12), CLAY_SIZING_FIXED(1) } },
+                    }) {}
+                    CLAY_TEXT(DS("%d cr", sumCr), TC(C_SUBTEXT, 11));
+                }
+
+                /* one row per attempt in this term */
+                for (int k = i; k < j; k++) {
+                    bool failed = (A[k].letter[0] == 'F');
+                    CLAY(CLAY_IDI("TermRow", k), {
+                        .layout = {
+                            .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(30) },
+                            .childAlignment  = { .y = CLAY_ALIGN_Y_CENTER },
+                            .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                        },
+                        .border = { .color = C_BORDER, .width = { .bottom = 1 } },
+                    }) {
+                        CLAY(CLAY_IDI("TRc", k), {
+                            .layout = { .sizing = { CLAY_SIZING_FIXED(74), CLAY_SIZING_GROW(0) },
+                                        .padding = { 0, 8, 0, 0 },
+                                        .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
+                        }) { CLAY_TEXT(DS("%s", A[k].code), TC(C_ACCENT, 11)); }
+
+                        CLAY(CLAY_IDI("TRn", k), {
+                            .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+                                        .padding = { 0, 8, 0, 0 },
+                                        .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
+                        }) { CLAY_TEXT(DS("%s", A[k].name), TC(C_TEXT, 11)); }
+
+                        CLAY(CLAY_IDI("TRcr", k), {
+                            .layout = { .sizing = { CLAY_SIZING_FIXED(48), CLAY_SIZING_GROW(0) },
+                                        .padding = { 0, 8, 0, 0 },
+                                        .childAlignment = { .x = CLAY_ALIGN_X_RIGHT, .y = CLAY_ALIGN_Y_CENTER } },
+                        }) { CLAY_TEXT(DS("%d cr", A[k].credit), TC(C_SUBTEXT, 10)); }
+
+                        CLAY(CLAY_IDI("TRl", k), {
+                            .layout = { .sizing = { CLAY_SIZING_FIXED(48), CLAY_SIZING_GROW(0) },
+                                        .padding = { 0, 8, 0, 0 },
+                                        .childAlignment = { .x = CLAY_ALIGN_X_RIGHT, .y = CLAY_ALIGN_Y_CENTER } },
+                        }) {
+                            char tmp[4] = { A[k].letter[0], '\0', '\0', '\0' };
+                            CLAY_TEXT(DS("%s", A[k].letter), TC(failed ? C_RED : score_color(tmp), 13));
+                        }
+                    }
+                }
+            }
+
+            i = j;
+            term_idx++;
+        }
+    }
+}
 
 void RenderMainContent(void)
 {
@@ -3144,7 +3359,7 @@ bool EditTrySave(void)
         snprintf(gEditError, sizeof(gEditError), STR_EDIT_ERR_NOT_FOUND, gEditCode);
         return false;
     }
-    DB_UpdateScoreRatio(gEditCode, mid, fin, gEditRatio);
+    DB_EditSubjectScore(gEditCode, mid, fin, gEditRatio);
     RefreshPlayer();
     snprintf(gResultMsg, sizeof(gResultMsg),
              STR_EDIT_SUCCESS_FORMAT,
@@ -3577,7 +3792,7 @@ void RenderEditPopup(void)
                                      .width = { .left=1,.right=1,.top=1,.bottom=1 } },
             }) {
                 if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
-                    DB_ClearScore(gEditCode);
+                    DB_ClearSubjectScore(gEditCode);
                     RefreshPlayer();
                     snprintf(gResultMsg, sizeof(gResultMsg),
                              STR_EDIT_RESET_SUCCESS, gEditCode);
@@ -3912,8 +4127,9 @@ static int ImportPortalGrades(const char *text)
     char *line = copy;
     char *line_saveptr = NULL;
     char *line_token = strtok_r(line, "\n\r", &line_saveptr);
-    
+
     db_exec("BEGIN;");
+    DB_ClearAttempts();   /* replace-all: each import is a full snapshot */
     while (line_token) {
         char *line_copy = strdup(line_token);
         if (line_copy) {
@@ -3923,6 +4139,8 @@ static int ImportPortalGrades(const char *text)
             float mid = -1.f;
             float fin = -1.f;
             char pasted_letter[16] = {0};
+            int  term = 0;       /* col0: enrollment term, e.g. 20231 */
+            int  classid = 0;    /* col4: portal class id (archival)   */
             bool success = false;
             
             if (has_tab) {
@@ -3945,10 +4163,14 @@ static int ImportPortalGrades(const char *text)
                     char *c = trim_space(cols[1]);
                     strncpy(code, c, sizeof(code) - 1);
                     code[sizeof(code) - 1] = '\0';
-                    
+
                     for (int i = 0; code[i]; i++) {
                         if (code[i] >= 'a' && code[i] <= 'z') code[i] -= 32;
                     }
+
+                    /* col0 = enrollment term (20231), col4 = portal class id */
+                    term    = (int)strtol(trim_space(cols[0]), NULL, 10);
+                    classid = (n_cols > 4) ? (int)strtol(trim_space(cols[4]), NULL, 10) : 0;
                     
                     if (DB_SubjectExists(code)) {
                         int credits = DB_GetSubjectCredits(code);
@@ -4090,22 +4312,12 @@ static int ImportPortalGrades(const char *text)
             }
             
             if (success) {
-                int best_ratio = 1; // Default fallback to 1 (50-50) since 50-50 is default now
-                if (pasted_letter[0] != '\0') {
-                    // Try to find which ratio selection (50-50, 40-60, 30-70) matches the pasted grade
-                    for (int r_sel = 1; r_sel <= 3; r_sel++) {
-                        float rm, rf;
-                        if (r_sel == 1) { rm = 0.5f; rf = 0.5f; }
-                        else if (r_sel == 2) { rm = 0.4f; rf = 0.6f; }
-                        else { rm = 0.3f; rf = 0.7f; }
-                        const char *computed = db_compute_letter_r(mid, fin, rm, rf);
-                        if (strcmp(computed, pasted_letter) == 0) {
-                            best_ratio = r_sel;
-                            break;
-                        }
-                    }
-                }
-                DB_UpdateScoreRatio(code, mid, fin, best_ratio);
+                /* Portal letter is authoritative; only compute one as a
+                 * fallback if the paste somehow lacked a grade column. */
+                const char *letter = pasted_letter;
+                if (letter[0] == '\0')
+                    letter = db_compute_letter_r(mid, fin, 0.5f, 0.5f);
+                DB_InsertAttempt(code, term, classid, mid, fin, letter);
                 imported_count++;
             }
             free(line_copy);
@@ -4114,6 +4326,8 @@ static int ImportPortalGrades(const char *text)
     }
     db_exec("COMMIT;");
     free(copy);
+    /* Project attempts onto subject_scores (best-attempt-per-subject). */
+    DB_DeriveScoresFromAttempts();
     return imported_count;
 }
 

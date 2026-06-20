@@ -23,6 +23,19 @@ typedef struct {
     int          need_plus;    /* whether that letter carries a '+'           */
 } TargetPlan;
 
+/* Per-term statistics series for the By Term charts. */
+#define MAX_TERM_SERIES 40
+typedef struct {
+    int   count;
+    int   terms[MAX_TERM_SERIES];      /* raw term code, e.g. 20231          */
+    float sem_gpa[MAX_TERM_SERIES];    /* semester GPA (credit-weighted)     */
+    int   reg_cred[MAX_TERM_SERIES];   /* credits registered that term       */
+    int   pass_cred[MAX_TERM_SERIES];  /* credits passed that term           */
+    int   cum_cred[MAX_TERM_SERIES];   /* cumulative credits passed          */
+    float cum_cpa[MAX_TERM_SERIES];    /* cumulative CPA (best-attempt-so-far)*/
+} TermSeries;
+void compute_term_series(const AttemptRow *att, int n, TermSeries *out);
+
 int _sl_resolve_limit(Player *p, int i);
 int _sl_resolve_pass(Player *p, int i);
 float score_to_gpa(char letter, int plus);

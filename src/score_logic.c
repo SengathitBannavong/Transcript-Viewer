@@ -1,5 +1,6 @@
 #include "score_logic.h"
 #include "app_data.h"
+#include <string.h>
 
 #define gGradRules (gApp.grad_rules)
 
@@ -56,6 +57,72 @@ float score_to_gpa(char letter, int plus)
         case 'C': return plus ? 2.5f : 2.0f;
         case 'D': return plus ? 1.5f : 1.0f;
         default:  return 0.0f;
+    }
+}
+
+/* ── Per-term statistics series (By Term charts) ─────────────────────────
+ *  att[] must be sorted by term ascending (as DB_LoadAttempts returns it).
+ *    sem_gpa  — credit-weighted GPA of that term's credit-bearing attempts
+ *               (including F's), mirroring the portal's per-term GPA.
+ *    pass_cred— credits passed that term (non-F/non-X). Retake F's add 0, so
+ *               summing never double-counts a subject.
+ *    cum_cred — running total of pass_cred.
+ *    cum_cpa  — CPA over the best-attempt-so-far of every subject taken
+ *               through that term (best = highest GPA point).
+ * ──────────────────────────────────────────────────────────────────────── */
+void compute_term_series(const AttemptRow *att, int n, TermSeries *out)
+{
+    out->count = 0;
+    if (!att || n <= 0) return;
+
+    for (int i = 0; i < n && out->count < MAX_TERM_SERIES; ) {
+        int   term = att[i].term;
+        int   ti   = out->count;
+
+        /* contiguous block for this term → semester GPA + passed credits */
+        float pts = 0.f;
+        int   cr = 0, regc = 0, passc = 0, j = i;
+        while (j < n && att[j].term == term) {
+            int  credit = att[j].credit;
+            int  plus   = (att[j].letter[1] == '+');
+            char L      = att[j].letter[0];
+            if (credit > 0) {
+                pts += score_to_gpa(L, plus) * (float)credit;
+                cr  += credit;
+            }
+            regc += credit;                              /* registered (all)  */
+            if (L != 'F' && L != 'X') passc += credit;   /* passing */
+            j++;
+        }
+        out->terms[ti]     = term;
+        out->sem_gpa[ti]   = (cr > 0) ? pts / (float)cr : 0.f;
+        out->reg_cred[ti]  = regc;
+        out->pass_cred[ti] = passc;
+        out->cum_cred[ti]  = (ti > 0 ? out->cum_cred[ti - 1] : 0) + passc;
+
+        /* cumulative CPA: best-attempt-so-far per subject within att[0..j) */
+        float cum_pts = 0.f;
+        int   cum_cr  = 0;
+        for (int a = 0; a < j; a++) {
+            int first = 1;                       /* first sighting of this code? */
+            for (int b = 0; b < a; b++)
+                if (strcmp(att[b].code, att[a].code) == 0) { first = 0; break; }
+            if (!first) continue;
+
+            float bestpt = 0.f;
+            int   bestcr = att[a].credit;
+            for (int b = 0; b < j; b++) {
+                if (strcmp(att[b].code, att[a].code) != 0) continue;
+                int   plus = (att[b].letter[1] == '+');
+                float p    = score_to_gpa(att[b].letter[0], plus);
+                if (p > bestpt) { bestpt = p; bestcr = att[b].credit; }
+            }
+            if (bestcr > 0) { cum_pts += bestpt * (float)bestcr; cum_cr += bestcr; }
+        }
+        out->cum_cpa[ti] = (cum_cr > 0) ? cum_pts / (float)cum_cr : 0.f;
+
+        out->count++;
+        i = j;
     }
 }
 

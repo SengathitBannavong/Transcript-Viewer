@@ -155,7 +155,19 @@ void DB_CreateSchema(void)
         "  mid          REAL    NOT NULL DEFAULT 0.0,"
         "  final        REAL    NOT NULL DEFAULT 0.0,"
         "  pass         INTEGER NOT NULL DEFAULT 0,"
-        "  ever_studied INTEGER NOT NULL DEFAULT 0"
+        "  ever_studied INTEGER NOT NULL DEFAULT 0,"
+        "  source       INTEGER NOT NULL DEFAULT 0"  /* 0=manual/plan, 1=import-derived */
+        ");"
+    );
+    db_exec(
+        "CREATE TABLE IF NOT EXISTS score_attempts("
+        "  subject_id INTEGER NOT NULL REFERENCES subjects(id),"
+        "  term       INTEGER NOT NULL,"          /* e.g. 20231 = year 2023, sem 1 */
+        "  classid    INTEGER NOT NULL DEFAULT 0,"/* portal class id (archival)     */
+        "  mid        REAL    NOT NULL DEFAULT 0.0,"
+        "  final      REAL    NOT NULL DEFAULT 0.0,"
+        "  letter     TEXT    NOT NULL DEFAULT 'X',"
+        "  PRIMARY KEY(subject_id, term)"
         ");"
     );
     db_exec(
@@ -166,6 +178,180 @@ void DB_CreateSchema(void)
         "  group_id  INTEGER NOT NULL DEFAULT 0"
         ");"
     );
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+ * db_column_exists — does `table` have a column named `col`?
+ * ───────────────────────────────────────────────────────────────────── */
+static int db_column_exists(const char *table, const char *col)
+{
+    if (!gDB) return 0;
+    char sql[128];
+    snprintf(sql, sizeof(sql), "PRAGMA table_info(%s);", table);
+    sqlite3_stmt *st = NULL;
+    if (sqlite3_prepare_v2(gDB, sql, -1, &st, NULL) != SQLITE_OK) return 0;
+    int found = 0;
+    while (sqlite3_step(st) == SQLITE_ROW) {
+        const char *name = (const char*)sqlite3_column_text(st, 1);
+        if (name && strcmp(name, col) == 0) { found = 1; break; }
+    }
+    sqlite3_finalize(st);
+    return found;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+ * DB_Migrate — bring an existing DB up to the per-term schema.
+ *   score_attempts is created by DB_CreateSchema (IF NOT EXISTS); here we
+ *   add the subject_scores.source column on legacy DBs and mark already-
+ *   studied rows as import-derived so the first term-aware import
+ *   (replace-all) reconciles them to the real transcript.
+ * ───────────────────────────────────────────────────────────────────── */
+void DB_Migrate(void)
+{
+    if (!gDB) return;
+    if (!db_column_exists("subject_scores", "source")) {
+        db_exec("ALTER TABLE subject_scores ADD COLUMN source INTEGER NOT NULL DEFAULT 0;");
+        db_exec("UPDATE subject_scores SET source=1 WHERE ever_studied=1;");
+        DB_Persist();
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+ * DB_ClearAttempts — wipe all attempts (replace-all import snapshot).
+ * ───────────────────────────────────────────────────────────────────── */
+void DB_ClearAttempts(void) { db_exec("DELETE FROM score_attempts;"); }
+
+/* ─────────────────────────────────────────────────────────────────────
+ * DB_InsertAttempt — insert/replace one (subject, term) attempt.
+ *   Portal letter is stored as-is (authoritative). Unknown codes are
+ *   silently ignored (no matching subjects row).
+ * ───────────────────────────────────────────────────────────────────── */
+int DB_InsertAttempt(const char *code, int term, int classid,
+                     float mid, float final_, const char *letter)
+{
+    if (!gDB || !code) return 0;
+    sqlite3_stmt *st = NULL;
+    sqlite3_prepare_v2(gDB,
+        "INSERT OR REPLACE INTO score_attempts(subject_id,term,classid,mid,final,letter) "
+        "SELECT id,?,?,?,?,? FROM subjects WHERE code=?;",
+        -1, &st, NULL);
+    sqlite3_bind_int   (st, 1, term);
+    sqlite3_bind_int   (st, 2, classid);
+    sqlite3_bind_double(st, 3, (double)mid);
+    sqlite3_bind_double(st, 4, (double)final_);
+    sqlite3_bind_text  (st, 5, (letter && letter[0]) ? letter : "X", -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text  (st, 6, code, -1, SQLITE_TRANSIENT);
+    int rc = sqlite3_step(st);
+    sqlite3_finalize(st);
+    return (rc == SQLITE_DONE) ? sqlite3_changes(gDB) : 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+ * DB_DeriveScoresFromAttempts — project score_attempts onto subject_scores.
+ *   For every subject with attempts, store the BEST attempt (highest letter
+ *   GPA point, ties → latest term) as the single derived score (source=1).
+ *   Previously-derived rows with no remaining attempts revert to unstudied,
+ *   while manual planning rows (source=0) are never touched.
+ * ───────────────────────────────────────────────────────────────────── */
+void DB_DeriveScoresFromAttempts(void)
+{
+    if (!gDB) return;
+    /* letter → ranking weight; A/A+ both top, mirrors score_to_gpa() order */
+    static const char *kRank =
+        "CASE letter WHEN 'A+' THEN 8 WHEN 'A' THEN 8 "
+        "WHEN 'B+' THEN 7 WHEN 'B' THEN 6 WHEN 'C+' THEN 5 WHEN 'C' THEN 4 "
+        "WHEN 'D+' THEN 3 WHEN 'D' THEN 2 ELSE 0 END";
+
+    db_exec("BEGIN;");
+    /* reset previously import-derived rows; the loop re-fills those still taken */
+    db_exec("UPDATE subject_scores SET score_letter='X',mid=0,final=0,pass=0,"
+            "ever_studied=0,source=0 WHERE source=1;");
+
+    sqlite3_stmt *sids = NULL;
+    sqlite3_prepare_v2(gDB, "SELECT DISTINCT subject_id FROM score_attempts;",
+                       -1, &sids, NULL);
+
+    char q[256];
+    snprintf(q, sizeof(q),
+        "SELECT letter,mid,final FROM score_attempts WHERE subject_id=? "
+        "ORDER BY (%s) DESC, term DESC LIMIT 1;", kRank);
+    sqlite3_stmt *best = NULL;
+    sqlite3_prepare_v2(gDB, q, -1, &best, NULL);
+
+    sqlite3_stmt *upd = NULL;
+    sqlite3_prepare_v2(gDB,
+        "UPDATE subject_scores SET score_letter=?,mid=?,final=?,pass=?,"
+        "ever_studied=1,source=1 WHERE subject_id=?;", -1, &upd, NULL);
+
+    while (sqlite3_step(sids) == SQLITE_ROW) {
+        int sid = sqlite3_column_int(sids, 0);
+        sqlite3_bind_int(best, 1, sid);
+        if (sqlite3_step(best) == SQLITE_ROW) {
+            const char *ltr = (const char*)sqlite3_column_text(best, 0);
+            double mid = sqlite3_column_double(best, 1);
+            double fin = sqlite3_column_double(best, 2);
+            sqlite3_bind_text  (upd, 1, (ltr && ltr[0]) ? ltr : "X", -1, SQLITE_TRANSIENT);
+            sqlite3_bind_double(upd, 2, mid);
+            sqlite3_bind_double(upd, 3, fin);
+            sqlite3_bind_int   (upd, 4, db_is_pass(ltr));
+            sqlite3_bind_int   (upd, 5, sid);
+            sqlite3_step(upd);
+            sqlite3_reset(upd);
+        }
+        sqlite3_reset(best);
+    }
+    sqlite3_finalize(sids);
+    sqlite3_finalize(best);
+    sqlite3_finalize(upd);
+    db_exec("COMMIT;");
+    DB_Persist();
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+ * DB_LoadAttempts — load all attempts (term-ordered) into out[]; returns count.
+ * ───────────────────────────────────────────────────────────────────── */
+int DB_LoadAttempts(AttemptRow *out, int max)
+{
+    if (!gDB || !out || max <= 0) return 0;
+    sqlite3_stmt *st = NULL;
+    sqlite3_prepare_v2(gDB,
+        "SELECT a.term,s.code,s.name,s.credit,a.mid,a.final,a.letter "
+        "FROM score_attempts a JOIN subjects s ON s.id=a.subject_id "
+        "ORDER BY a.term ASC, s.code ASC;", -1, &st, NULL);
+    int n = 0;
+    while (n < max && sqlite3_step(st) == SQLITE_ROW) {
+        AttemptRow *r = &out[n];
+        const char *code = (const char*)sqlite3_column_text(st, 1);
+        const char *name = (const char*)sqlite3_column_text(st, 2);
+        const char *ltr  = (const char*)sqlite3_column_text(st, 6);
+        r->term   = sqlite3_column_int(st, 0);
+        snprintf(r->code, sizeof(r->code), "%s", code ? code : "");
+        snprintf(r->name, sizeof(r->name), "%s", name ? name : "");
+        r->credit = sqlite3_column_int(st, 3);
+        r->mid    = (float)sqlite3_column_double(st, 4);
+        r->final_ = (float)sqlite3_column_double(st, 5);
+        snprintf(r->letter, sizeof(r->letter), "%s", ltr ? ltr : "X");
+        n++;
+    }
+    sqlite3_finalize(st);
+    return n;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+ * DB_SubjectHasAttempts — 1 if the subject has ≥1 imported attempt.
+ * ───────────────────────────────────────────────────────────────────── */
+int DB_SubjectHasAttempts(const char *code)
+{
+    if (!gDB || !code) return 0;
+    sqlite3_stmt *st = NULL;
+    sqlite3_prepare_v2(gDB,
+        "SELECT COUNT(*) FROM score_attempts a "
+        "JOIN subjects s ON s.id=a.subject_id WHERE s.code=?;", -1, &st, NULL);
+    sqlite3_bind_text(st, 1, code, -1, SQLITE_TRANSIENT);
+    int n = 0;
+    if (sqlite3_step(st) == SQLITE_ROW) n = sqlite3_column_int(st, 0);
+    sqlite3_finalize(st);
+    return n > 0;
 }
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -490,7 +676,22 @@ void DB_ReloadData(void)
         "  FROM subjects s JOIN subject_scores sc ON sc.subject_id = s.id;"
     );
 
+    /* ── 1b. Snapshot attempts by code (subject ids change on reseed) ─── */
+    db_exec(
+        "CREATE TEMP TABLE IF NOT EXISTS _reload_attempts("
+        "  code TEXT, term INTEGER, classid INTEGER,"
+        "  mid REAL, final REAL, letter TEXT"
+        ");"
+    );
+    db_exec("DELETE FROM _reload_attempts;");
+    db_exec(
+        "INSERT INTO _reload_attempts "
+        "SELECT s.code, a.term, a.classid, a.mid, a.final, a.letter "
+        "  FROM subjects s JOIN score_attempts a ON a.subject_id = s.id;"
+    );
+
     /* ── 2. Wipe all data tables ─────────────────────────────────────── */
+    db_exec("DELETE FROM score_attempts;");
     db_exec("DELETE FROM subject_scores;");
     db_exec("DELETE FROM subjects;");
     db_exec("DELETE FROM subject_types;");
@@ -536,6 +737,17 @@ void DB_ReloadData(void)
         sqlite3_finalize(upd);
     }
     db_exec("DROP TABLE IF EXISTS _reload_scores;");
+
+    /* ── 4b. Restore attempts onto the freshly seeded subjects (by code),
+     *        then re-project best-attempt scores so source flags + derived
+     *        rows are rebuilt correctly. */
+    db_exec(
+        "INSERT INTO score_attempts(subject_id,term,classid,mid,final,letter) "
+        "SELECT s.id, r.term, r.classid, r.mid, r.final, r.letter "
+        "  FROM _reload_attempts r JOIN subjects s ON s.code = r.code;"
+    );
+    db_exec("DROP TABLE IF EXISTS _reload_attempts;");
+    DB_DeriveScoresFromAttempts();
 
     /* restored letters are taken from the snapshot as-is — re-apply the
      * per-component minimum so reload can't bring back stale passing grades */
@@ -766,6 +978,82 @@ int DB_UpdateScore(const char *code, float mid_, float final_)
  * DB_ClearScore
  * ───────────────────────────────────────────────────────────────────── */
 int DB_ClearScore(const char *code) { return DB_UpdateScoreRatio(code, 0.f, 0.f, 3); }
+
+/* Letter-rank expression shared by attempt selection (A/A+ both top). */
+#define DB_ATTEMPT_RANK \
+    "CASE letter WHEN 'A+' THEN 8 WHEN 'A' THEN 8 " \
+    "WHEN 'B+' THEN 7 WHEN 'B' THEN 6 WHEN 'C+' THEN 5 WHEN 'C' THEN 4 " \
+    "WHEN 'D+' THEN 3 WHEN 'D' THEN 2 ELSE 0 END"
+
+/* ─────────────────────────────────────────────────────────────────────
+ * DB_EditSubjectScore — manual edit from the score editor.
+ *   If the subject has imported attempts, update its current best attempt
+ *   (mid/final/letter via the chosen ratio) and re-derive, so the change is
+ *   consistent with the By Term view and survives re-derivation. Subjects
+ *   with no attempts fall back to the planning row.
+ * ───────────────────────────────────────────────────────────────────── */
+int DB_EditSubjectScore(const char *code, float mid_, float final_, int ratio_sel)
+{
+    if (!gDB || !code) return 0;
+    if (!DB_SubjectHasAttempts(code))
+        return DB_UpdateScoreRatio(code, mid_, final_, ratio_sel);
+
+    int credits = DB_GetSubjectCredits(code);
+    if (credits == 0) {
+        if (mid_ > 0.f && final_ <= 0.f)      final_ = mid_;
+        else if (final_ > 0.f && mid_ <= 0.f) mid_   = final_;
+    }
+    float rm, rf;
+    switch (ratio_sel) {
+        case 1:  rm = 0.5f; rf = 0.5f; break;
+        case 2:  rm = 0.4f; rf = 0.6f; break;
+        default: rm = 0.3f; rf = 0.7f; break;
+    }
+    const char *letter = db_compute_letter_r(mid_, final_, rm, rf);
+
+    /* target the current best attempt (highest letter rank, latest term) */
+    const char *sql =
+        "UPDATE score_attempts SET mid=?,final=?,letter=? "
+        "WHERE subject_id=(SELECT id FROM subjects WHERE code=?) "
+        "AND term=(SELECT term FROM score_attempts "
+        "          WHERE subject_id=(SELECT id FROM subjects WHERE code=?) "
+        "          ORDER BY (" DB_ATTEMPT_RANK ") DESC, term DESC LIMIT 1);";
+    sqlite3_stmt *st = NULL;
+    sqlite3_prepare_v2(gDB, sql, -1, &st, NULL);
+    sqlite3_bind_double(st, 1, (double)mid_);
+    sqlite3_bind_double(st, 2, (double)final_);
+    sqlite3_bind_text  (st, 3, letter, -1, SQLITE_STATIC);
+    sqlite3_bind_text  (st, 4, code, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text  (st, 5, code, -1, SQLITE_TRANSIENT);
+    int rc = sqlite3_step(st);
+    sqlite3_finalize(st);
+    int changed = (rc == SQLITE_DONE) ? sqlite3_changes(gDB) : 0;
+    DB_DeriveScoresFromAttempts();   /* re-project best + persist */
+    return changed;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+ * DB_ClearSubjectScore — reset a subject from the editor.
+ *   Imported subjects have all their attempts deleted (then re-derive);
+ *   untaken subjects clear their planning row.
+ * ───────────────────────────────────────────────────────────────────── */
+int DB_ClearSubjectScore(const char *code)
+{
+    if (!gDB || !code) return 0;
+    if (!DB_SubjectHasAttempts(code))
+        return DB_ClearScore(code);
+
+    sqlite3_stmt *st = NULL;
+    sqlite3_prepare_v2(gDB,
+        "DELETE FROM score_attempts "
+        "WHERE subject_id=(SELECT id FROM subjects WHERE code=?);",
+        -1, &st, NULL);
+    sqlite3_bind_text(st, 1, code, -1, SQLITE_TRANSIENT);
+    sqlite3_step(st);
+    sqlite3_finalize(st);
+    DB_DeriveScoresFromAttempts();
+    return 1;
+}
 
 /* ─────────────────────────────────────────────────────────────────────
  * DB_SubjectExists
