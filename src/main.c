@@ -123,58 +123,6 @@ static void DrawTermChart(Clay_BoundingBox bb, const int *terms, const float *va
     }
 }
 
-/* ── Horizontal bar chart: y = term (top→bottom), x = credits ─────────────
- *  Used for "Credits registered per term"; value labels sit at each bar end.
- * ──────────────────────────────────────────────────────────────────────── */
-static void DrawTermChartH(Clay_BoundingBox bb, const int *terms, const int *vals,
-                           int n, float xmax, int xdivs)
-{
-    if (n <= 0 || xmax <= 0.f) return;
-    Color axis = Rc(C_BORDER), grid = RcA(C_BORDER, 120),
-          txt  = Rc(C_SUBTEXT), data = Rc(C_ACCENT);
-
-    const float padL = 46.f, padR = 30.f, padT = 8.f, padB = 22.f;
-    float px = bb.x + padL,             py = bb.y + padT;
-    float pw = bb.width  - padL - padR, ph = bb.height - padT - padB;
-    if (pw < 20.f || ph < 20.f) return;
-
-    float lsz = 9.f * gApp.font_scale;
-
-    /* vertical gridlines + x labels (credits) */
-    for (int k = 0; k <= xdivs; k++) {
-        float xx = px + pw * ((float)k / (float)xdivs);
-        DrawLineV((Vector2){ xx, py }, (Vector2){ xx, py + ph }, grid);
-        char lbl[16];
-        snprintf(lbl, sizeof(lbl), "%d", (int)(xmax * (float)k / (float)xdivs + 0.5f));
-        Vector2 ts = MeasureTextEx(gApp.fonts[0], lbl, lsz, 1.f);
-        DrawTextEx(gApp.fonts[0], lbl, (Vector2){ xx - ts.x*0.5f, py + ph + 5.f }, lsz, 1.f, txt);
-    }
-    /* axes */
-    DrawLineEx((Vector2){ px, py }, (Vector2){ px, py + ph }, 1.5f, axis);
-    DrawLineEx((Vector2){ px, py + ph }, (Vector2){ px + pw, py + ph }, 1.5f, axis);
-
-    float slot = ph / (float)n;
-    for (int i = 0; i < n; i++) {
-        float yc = py + slot * ((float)i + 0.5f);   /* earliest term at top */
-        float bw = pw * ((float)vals[i] / xmax);
-        if (bw < 0.f) bw = 0.f;
-        float bh = slot * 0.5f; if (bh > 22.f) bh = 22.f;
-        DrawRectangleRec((Rectangle){ px, yc - bh*0.5f, bw, bh }, data);
-
-        /* term label on the y-axis (right-aligned before the axis) */
-        char tl[16];
-        snprintf(tl, sizeof(tl), "%d", terms[i]);
-        Vector2 tsz = MeasureTextEx(gApp.fonts[0], tl, lsz, 1.f);
-        DrawTextEx(gApp.fonts[0], tl, (Vector2){ px - tsz.x - 5.f, yc - tsz.y*0.5f }, lsz, 1.f, txt);
-
-        /* value label at the bar end */
-        char vl[16];
-        snprintf(vl, sizeof(vl), "%d", vals[i]);
-        Vector2 vs = MeasureTextEx(gApp.fonts[0], vl, lsz, 1.f);
-        DrawTextEx(gApp.fonts[0], vl, (Vector2){ px + bw + 4.f, yc - vs.y*0.5f }, lsz, 1.f, txt);
-    }
-}
-
 /* Round an integer maximum up to a clean axis top, returning divisions too. */
 static void term_int_scale(int maxv, float *ymax, int *ydivs)
 {
@@ -891,14 +839,16 @@ static void UpdateDrawFrame(void)
             TermSeries ts;
             compute_term_series(gApp.attempts, gApp.attempt_count, &ts);
             if (ts.count > 0) {
-                /* credits registered per term — horizontal bars (x=credits, y=term) */
+                /* credits registered per term — bars */
                 Clay_ElementData rb = Clay_GetElementData(
                     Clay_GetElementId(CLAY_STRING(TERM_CHART_REG_ID)));
                 if (rb.found && rb.boundingBox.width > 20.f) {
                     int mx = 0;
                     for (int i = 0; i < ts.count; i++) if (ts.reg_cred[i] > mx) mx = ts.reg_cred[i];
-                    float xm; int xd; term_int_scale(mx, &xm, &xd);
-                    DrawTermChartH(rb.boundingBox, ts.terms, ts.reg_cred, ts.count, xm, xd);
+                    float ym; int yd; term_int_scale(mx, &ym, &yd);
+                    float vals[MAX_TERM_SERIES];
+                    for (int i = 0; i < ts.count; i++) vals[i] = (float)ts.reg_cred[i];
+                    DrawTermChart(rb.boundingBox, ts.terms, vals, ts.count, ym, yd, true, 0);
                 }
                 /* credits passed per term — bars */
                 Clay_ElementData pb = Clay_GetElementData(

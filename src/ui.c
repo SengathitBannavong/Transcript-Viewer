@@ -1013,7 +1013,7 @@ void RenderTermsPage(void)
             }) {
                 CLAY_TEXT(CLAY_STRING("Credits registered per term"), TC(C_TEXT, 14));
                 CLAY(CLAY_ID(TERM_CHART_REG_ID), {
-                    .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(210) } },
+                    .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(190) } },
                 }) {}
             }
             CLAY(CLAY_ID("TermChartPassCard"), {
