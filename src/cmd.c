@@ -2,6 +2,7 @@
 #include "app_data.h"
 #include "db.h"
 #include "score_logic.h"
+#include "pdf_export.h"
 #include "raylib.h"
 #include <string.h>
 #include <stdio.h>
@@ -45,7 +46,7 @@ void ExecuteCommand(const char *input,
 
     if (argc < 2) {
         snprintf(out_msg, msg_size,
-                 "type <1-13>  |  score <CODE> <mid> <fin>  |  clear <CODE>  |  reload  |  help");
+                 "type <1-13>  |  score <CODE> <mid> <fin>  |  clear <CODE>  |  export  |  reload  |  help");
         return;
     }
 
@@ -54,7 +55,7 @@ void ExecuteCommand(const char *input,
     /* ── help ── */
     if (strcmp(verb, "help") == 0) {
         snprintf(out_msg, msg_size,
-                 "type 1-13  |  score <CODE> <mid> <fin> [ratio 1-3]  |  clear <CODE>  |  cpa  |  reload  |  logout");
+                 "type 1-13  |  score <CODE> <mid> <fin> [ratio 1-3]  |  clear <CODE>  |  cpa  |  export [term|type]  |  reload  |  logout");
         return;
     }
 
@@ -151,6 +152,28 @@ void ExecuteCommand(const char *input,
                      "Reload done. %d warning%s remain (check data banner)",
                      gDataWarnCount, gDataWarnCount == 1 ? "" : "s");
         }
+        return;
+    }
+
+    /* ── export [term|type] ── (PDF; no arg = auto: by-term if imported) */
+    if (strcmp(verb, "export") == 0) {
+        PdfGroupMode mode = PDF_GROUP_AUTO;
+        if (argc >= 3) {
+            if      (strcmp(argv[2], "term") == 0) mode = PDF_GROUP_TERM;
+            else if (strcmp(argv[2], "type") == 0) mode = PDF_GROUP_TYPE;
+            else {
+                snprintf(out_msg, msg_size,
+                         "export: usage: export [term|type]");
+                return;
+            }
+        }
+        if (mode == PDF_GROUP_TERM && !PDF_TermsAvailable()) {
+            snprintf(out_msg, msg_size,
+                     "export: no per-term data imported - try 'export type'");
+            return;
+        }
+        char path[512];
+        PDF_ExportTranscript(mode, path, sizeof path, out_msg, msg_size);
         return;
     }
 

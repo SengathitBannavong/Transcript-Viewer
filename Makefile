@@ -1,11 +1,13 @@
 CC   = gcc
 SRCDIR = src
 SRCS = $(SRCDIR)/main.c $(SRCDIR)/ui.c $(SRCDIR)/clay_renderer_raylib.c \
-       $(SRCDIR)/db.c $(SRCDIR)/score_logic.c $(SRCDIR)/cmd.c $(SRCDIR)/app_config.c
+       $(SRCDIR)/db.c $(SRCDIR)/score_logic.c $(SRCDIR)/cmd.c $(SRCDIR)/app_config.c \
+       $(SRCDIR)/pdf_export.c
 OBJS = $(SRCS:.c=.o)
 APP_DEPS = $(SRCDIR)/app_config.h $(SRCDIR)/app_data.h \
            $(SRCDIR)/cmd.h $(SRCDIR)/db.h $(SRCDIR)/score_logic.h \
-           $(SRCDIR)/struct_table.h $(SRCDIR)/ui.h $(SRCDIR)/clay_renderer_raylib.h
+           $(SRCDIR)/struct_table.h $(SRCDIR)/ui.h $(SRCDIR)/clay_renderer_raylib.h \
+           $(SRCDIR)/pdf_export.h
 
 
 # ── OS detection ──────────────────────────────────────────────────────────

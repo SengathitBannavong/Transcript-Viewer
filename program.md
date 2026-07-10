@@ -43,6 +43,7 @@ Open with **Ctrl + K**, then type a command and press **Enter**.
 | `type <N>` | `type 3` | Switch sidebar to subject-type N (0–11) |
 | `score <CODE> <mid> <fin>` | `score IT2000 7.5 8.0` | Set midterm and final scores for a subject (0.0–10.0); grade letter and pass/fail are recalculated automatically |
 | `clear <CODE>` | `clear IT2000` | Reset a subject score back to X / 0.0 |
+| `export [term\|type]` | `export term` | Export the transcript to a PDF. No argument = auto (by term if imported, else by type). See **Export to PDF** below. |
 | `logout` | `logout` | Close the current database and return to the name-input screen |
 | `help` | `help` | Show available commands in the result toast |
 
@@ -115,6 +116,38 @@ CPA below 2.0 is "Below classification" (not eligible to graduate).
 - **What to learn next** — every not-yet-passed subject, ranked failed-retakes-first,
   then by recommended term, then by credit. High-credit subjects are tagged
   "high impact"; each shows the target grade implied by your chosen tier.
+
+## Export to PDF
+
+Save a printable copy of your transcript as a real `.pdf` (no external tools or
+libraries required — the writer is built in).
+
+**How to trigger**
+
+- **Settings → Export Transcript (PDF)** → choose **Export by Term** or
+  **Export by Type**, or
+- the command palette: **Ctrl + K**, then `export`, `export term`, or `export type`.
+
+You choose how the grades are grouped:
+
+| Choice | Layout |
+|--------|--------|
+| **By term** | One section per semester with its GPA and credits, listing *every attempt* (retakes and newly-added subjects are shown under the term they were taken in, never masked or merged). |
+| **By type** | Grouped into the same subject-type sections as the dashboard (each with passed/total credits and its CPA), listing the courses you have grades for. |
+
+**By Term needs data.** Grouping by term is only possible once you have imported
+per-term grades from the portal. Until then the **Export by Term** button is
+shown inactive (greyed out and not clickable), and the `export term` command
+reports that no per-term data is available. **Export by Type** always works.
+
+On desktop a native *Save as…* dialog appears (via `zenity`/`kdialog`), seeded
+with `transcript_<user>.pdf` in your home folder. If no dialog tool is installed
+the file is written to the working directory instead. On the web build the PDF
+is generated and downloaded by the browser.
+
+Every PDF starts with a header (student, date, scale) and a summary (CPA all /
+passed, credits earned vs required, honour standing, graduation status) before
+the grade sections.
 
 ## Window
 

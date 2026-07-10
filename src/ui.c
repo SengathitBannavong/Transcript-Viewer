@@ -7,6 +7,7 @@
 #include "app_data.h"
 #include "db.h"
 #include "score_logic.h"
+#include "pdf_export.h"
 #include "raylib.h"
 #include "ui_strings.h"
 #include "app_config.h"
@@ -3273,6 +3274,67 @@ void RenderSettings(void)
                 CLAY_TEXT(CLAY_STRING("Open Import Tool"),
                           TC(Clay_Hovered() ? C_WHITE : C_TEXT, 11));
             }
+        }
+
+        /* ── Export transcript to PDF ── */
+        CFG_CARD_BEGIN("SetExportCfg", "Export Transcript (PDF)", "Save a printable copy of your grades")
+            bool termsAvail = PDF_TermsAvailable();
+            CLAY_TEXT(CLAY_STRING("Export a PDF of your transcript. Choose how to group it: by term (every attempt, retakes included) or by subject type. \"By Term\" needs imported per-term grades."), TCW(C_SUBTEXT, 10));
+
+            CLAY(CLAY_ID("SetExportRow"), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                            .childGap = SP_SM, .layoutDirection = CLAY_LEFT_TO_RIGHT },
+            }) {
+                /* Export by Term — inactive (greyed, non-clickable) with no data */
+                CLAY(CLAY_ID("SetExportTerm"), {
+                    .layout = {
+                        .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(32) },
+                        .padding        = { 16, 16, 0, 0 },
+                        .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+                    },
+                    .backgroundColor = !termsAvail ? C_BG
+                                     : (Clay_Hovered() ? C_ACCENT_DIM : C_CARD),
+                    .cornerRadius    = CLAY_CORNER_RADIUS(5),
+                    .border          = { .color = C_BORDER,
+                                         .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+                }) {
+                    if (termsAvail && gDBReady && Clay_Hovered()
+                            && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                        PDF_ExportTranscript(PDF_GROUP_TERM, NULL, 0,
+                                             gResultMsg, sizeof gResultMsg);
+                        ShowToastFor(5.f);
+                    }
+                    CLAY_TEXT(CLAY_STRING("Export by Term"),
+                              TC(!termsAvail ? C_SUBTEXT
+                                 : (Clay_Hovered() ? C_WHITE : C_TEXT), 11));
+                }
+
+                /* Export by Type — always available */
+                CLAY(CLAY_ID("SetExportType"), {
+                    .layout = {
+                        .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(32) },
+                        .padding        = { 16, 16, 0, 0 },
+                        .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+                    },
+                    .backgroundColor = Clay_Hovered() ? C_ACCENT_DIM : C_CARD,
+                    .cornerRadius    = CLAY_CORNER_RADIUS(5),
+                    .border          = { .color = C_BORDER,
+                                         .width = { .left=1,.right=1,.top=1,.bottom=1 } },
+                }) {
+                    if (gDBReady && Clay_Hovered()
+                            && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                        PDF_ExportTranscript(PDF_GROUP_TYPE, NULL, 0,
+                                             gResultMsg, sizeof gResultMsg);
+                        ShowToastFor(5.f);
+                    }
+                    CLAY_TEXT(CLAY_STRING("Export by Type"),
+                              TC(Clay_Hovered() ? C_WHITE : C_TEXT, 11));
+                }
+            }
+
+            if (!termsAvail)
+                CLAY_TEXT(CLAY_STRING("\"By Term\" is unavailable until you import per-term grades from the portal."),
+                          TCW(C_SUBTEXT, 9));
         }
 
         /* ── Manual-edit warning (footer) ── */

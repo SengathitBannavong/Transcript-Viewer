@@ -8,6 +8,9 @@
 sqlite3.c
 sqlite3.h
 
+# Exported transcripts
+transcript_*.pdf
+
 # Packaging artifacts (make linux-package / make linux-appimage)
 /transcript-viewer-linux
 /transcript-viewer-linux.zip
