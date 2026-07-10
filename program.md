@@ -133,7 +133,7 @@ You choose how the grades are grouped:
 | Choice | Layout |
 |--------|--------|
 | **By term** | One section per semester with its GPA and credits, listing *every attempt* (retakes and newly-added subjects are shown under the term they were taken in, never masked or merged). |
-| **By type** | Grouped into the same subject-type sections as the dashboard (each with passed/total credits and its CPA), listing the courses you have grades for. |
+| **By type** | Grouped into the same subject-type sections as the dashboard. Each header shows progress toward that type's graduation requirement — passed vs the *required* amount (the rule-resolved limit, not the raw sum of every subject's credits), in credits or, for subject-count types like sport, in subjects — plus the section CPA. |
 
 **By Term needs data.** Grouping by term is only possible once you have imported
 per-term grades from the portal. Until then the **Export by Term** button is

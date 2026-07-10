@@ -420,10 +420,18 @@ static PdfGroupMode compose_transcript(PdfDoc *d, PdfGroupMode requested)
         if (!studied) continue;
         any = 1;
 
-        float cpaT = calc_cpa_type(p, t, 0);
+        /* Show progress against the graduation requirement for this type
+         * (the rule-resolved limit), not the raw sum of every subject's
+         * credits — mirrors the dashboard's "This section" figure. For
+         * subject-count types (e.g. sport) the figures are subject counts. */
+        float cpaT     = calc_cpa_type(p, t, 0);
+        int   req_pass = _sl_resolve_pass(p, t);
+        int   req_lim  = _sl_resolve_limit(p, t);
+        const char *unit =
+            (gApp.grad_rules[t].mode == GRAD_SUBJECT_COUNT) ? "subjects" : "cr";
         pdf_add(d, F_BOLD, 12, 16, COL_HDR,
-                "%s      passed %u/%d cr      CPA %.2f",
-                gApp.type_name[t], st->count_passCredit, st->Total_Credit, cpaT);
+                "%s      passed %d/%d %s      CPA %.2f",
+                gApp.type_name[t], req_pass, req_lim, unit, cpaT);
         add_course_header(d);
         for (Subject_Node *node = st->head; node; node = node->next) {
             if (node->score_letter == 'X') continue;   /* not taken yet */
