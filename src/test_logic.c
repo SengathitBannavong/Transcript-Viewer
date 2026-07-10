@@ -297,6 +297,61 @@ static void test_calc_cpa(void)
     FCHECK(calc_cpa(&p, 1), 4.0f,        "A(4c)+C(2c) pass-only   CPA = 4.0");
 }
 
+/* ── 3b. calc_qp_type / calc_qp_overall (quality points analyzer) ───── */
+static void test_qp(void)
+{
+    GROUP("calc_qp  (quality points, 0-credit exclusion, pass-only, simulated)");
+    Player p;
+    memset(&p, 0, sizeof(p));
+    node_pool_reset();
+    gApp.sandbox_override_count = 0;
+
+    /* co_so_nganh: A+ (3c) + C (2c) → QP = 4*3 + 2*2 = 16, cr 5, CPA 3.2 */
+    Subject_Node *a = make_node('A', 1, 3, 1, 1); strcpy(a->ID, "CS101");
+    Subject_Node *c = make_node('C', 0, 2, 1, 1); strcpy(c->ID, "CS102");
+    type_add(&p.numofSubjectType[co_so_nganh], a);
+    type_add(&p.numofSubjectType[co_so_nganh], c);
+
+    QpCategory q = calc_qp_type(&p, co_so_nganh, 0, 0);
+    FCHECK(q.qp, 16.0f, "QP = 4.0*3 + 2.0*2 = 16.0");
+    CHECK(q.credits == 5, "credits counted = 5");
+    FCHECK(q.cpa, 3.2f, "category CPA = 16/5 = 3.2");
+
+    /* 0-credit PE course must not move CPA or the credit denominator */
+    Subject_Node *pe = make_node('A', 0, 0, 1, 1); strcpy(pe->ID, "PE001");
+    type_add(&p.numofSubjectType[the_thao], pe);
+    QpCategory pq = calc_qp_type(&p, the_thao, 0, 0);
+    FCHECK(pq.qp, 0.0f,      "0-credit course contributes 0 quality points");
+    CHECK(pq.credits == 0,   "0-credit course adds 0 credits");
+    FCHECK(pq.cpa, 0.0f,     "0-credit-only category CPA = 0.0");
+
+    /* overall folds every category but the 0-credit PE never moves it */
+    QpCategory ov = calc_qp_overall(&p, 0, 0);
+    FCHECK(ov.cpa, 3.2f,     "overall CPA unaffected by 0-credit PE");
+    CHECK(ov.credits == 5,   "overall credits = 5 (PE excluded)");
+
+    /* pass-only: a failed F (4c) drags all-attempts, is dropped when pass-only */
+    Subject_Node *f = make_node('F', 0, 4, 1, 0); strcpy(f->ID, "CS103");
+    type_add(&p.numofSubjectType[co_so_nganh], f);
+    FCHECK(calc_qp_type(&p, co_so_nganh, 0, 0).cpa, 16.0f/9.0f, "all-attempts CPA = 16/9 (F drags)");
+    FCHECK(calc_qp_type(&p, co_so_nganh, 1, 0).cpa, 3.2f,        "passed-only CPA = 16/5 (F excluded)");
+
+    /* simulated retake CS103 F → B (3.0): now passes, its 4c count in */
+    gApp.sandbox_override_count = 1;
+    strcpy(gApp.sandbox_overrides[0].subject_id, "CS103");
+    gApp.sandbox_overrides[0].grade_letter = 'B';
+    gApp.sandbox_overrides[0].plus         = 0;
+
+    QpCategory sim = calc_qp_type(&p, co_so_nganh, 0, 1);
+    FCHECK(sim.qp, 28.0f,        "simulated QP = 16 + 3.0*4 = 28");
+    CHECK(sim.credits == 9,      "simulated credits = 9");
+    FCHECK(sim.cpa, 28.0f/9.0f,  "simulated CPA = 28/9");
+    FCHECK(calc_qp_type(&p, co_so_nganh, 1, 1).cpa, 28.0f/9.0f, "simulated pass-only CPA = 28/9 (retake passes)");
+    FCHECK(calc_qp_type(&p, co_so_nganh, 0, 0).cpa, 16.0f/9.0f, "override is non-destructive: actual CPA still 16/9");
+
+    gApp.sandbox_override_count = 0;   /* leave globals clean for later groups */
+}
+
 /* ── 4. calc_missing_types ─────────────────────────────────────────── */
 static void test_calc_missing_types(void)
 {
@@ -665,6 +720,7 @@ int main(void)
     test_score_to_gpa();
     test_calc_status_alert();
     test_calc_cpa();
+    test_qp();
     test_calc_missing_types();
     test_calc_effective_credits();
     test_calc_required_credits();

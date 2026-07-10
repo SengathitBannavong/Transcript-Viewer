@@ -109,6 +109,10 @@ typedef struct AppContext {
     int draft_override_count;
     bool sandbox_dirty;
 
+    /* 11b. Quality Points Analyzer view state (Planner page) */
+    bool qp_pass_only;     /* false = all attempts, true = passed only        */
+    bool qp_show_retakes;  /* reveal passed subjects for retake simulation    */
+
     /* 12. Student Comparison State */
     bool compare_focused;
     char compare_input[32];

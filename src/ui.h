@@ -32,6 +32,7 @@
 #define TERM_CHART_CUMCRED_ID "TermChartCumCred"  /* cumulative credits (line)   */
 #define TERM_CHART_GPA_ID     "TermChartGPA"      /* semester GPA (line)         */
 #define TERM_CHART_CPA_ID     "TermChartCPA"      /* cumulative CPA (line)       */
+#define QP_CHART_ID           "PlanQpChart"       /* quality points / category (h-bar) */
 
 /* Themes */
 typedef struct {

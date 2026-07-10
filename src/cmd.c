@@ -55,7 +55,7 @@ void ExecuteCommand(const char *input,
     /* ── help ── */
     if (strcmp(verb, "help") == 0) {
         snprintf(out_msg, msg_size,
-                 "type 1-13  |  score <CODE> <mid> <fin> [ratio 1-3]  |  clear <CODE>  |  cpa  |  export [term|type]  |  reload  |  logout");
+                 "type 1-13  |  score <CODE> <mid> <fin> [ratio 1-3]  |  clear <CODE>  |  cpa  |  export [term|type|sim]  |  reload  |  logout");
         return;
     }
 
@@ -155,15 +155,21 @@ void ExecuteCommand(const char *input,
         return;
     }
 
-    /* ── export [term|type] ── (PDF; no arg = auto: by-term if imported) */
+    /* ── export [term|type|sim] ── (PDF; no arg = auto: by-term if imported) */
     if (strcmp(verb, "export") == 0) {
+        /* export sim — separate what-if simulation report, not the transcript */
+        if (argc >= 3 && strcmp(argv[2], "sim") == 0) {
+            char path[512];
+            PDF_ExportSimulation(path, sizeof path, out_msg, msg_size);
+            return;
+        }
         PdfGroupMode mode = PDF_GROUP_AUTO;
         if (argc >= 3) {
             if      (strcmp(argv[2], "term") == 0) mode = PDF_GROUP_TERM;
             else if (strcmp(argv[2], "type") == 0) mode = PDF_GROUP_TYPE;
             else {
                 snprintf(out_msg, msg_size,
-                         "export: usage: export [term|type]");
+                         "export: usage: export [term|type|sim]");
                 return;
             }
         }

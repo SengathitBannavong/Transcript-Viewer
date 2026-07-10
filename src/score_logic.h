@@ -36,6 +36,24 @@ typedef struct {
 } TermSeries;
 void compute_term_series(const AttemptRow *att, int n, TermSeries *out);
 
+/* ── Quality-points breakdown for the Quality Points Analyzer ───────────────
+ *  quality_points = Σ (grade_point × credits) over the subjects counted.
+ *  0-credit courses (e.g. sports/PE) contribute nothing to either field, so
+ *  they never move the CPA — but callers may still list them separately.
+ * ──────────────────────────────────────────────────────────────────────── */
+typedef struct {
+    int   credits;   /* CPA-affecting credits counted                        */
+    float qp;        /* quality points = Σ grade_point × credits             */
+    float cpa;       /* qp / credits (0.0 when credits == 0)                 */
+} QpCategory;
+
+/* Quality points for one subject category / the whole transcript.
+ *   pass_only : 0 = all studied attempts, 1 = passed subjects only
+ *   simulated : 0 = real grades, 1 = apply the committed sandbox overrides
+ *               (gApp.sandbox_overrides — the same set the Planner projects) */
+QpCategory calc_qp_type(Player *p, int t, int pass_only, int simulated);
+QpCategory calc_qp_overall(Player *p, int pass_only, int simulated);
+
 int _sl_resolve_limit(Player *p, int i);
 int _sl_resolve_pass(Player *p, int i);
 float score_to_gpa(char letter, int plus);

@@ -123,6 +123,96 @@ static void DrawTermChart(Clay_BoundingBox bb, const int *terms, const float *va
     }
 }
 
+/* ── Quality-points-per-category bars (Planner analyzer) ──────────────────
+ *  One horizontal bar per active category, ranked by quality points (grade x
+ *  credits). Actual QP is a solid bar — green on the highest-leverage category,
+ *  red on the lowest-CPA "drag" category. When the sandbox holds committed
+ *  overrides the simulated QP is overlaid as a yellow outline, so a hypothetical
+ *  retake visibly grows or shrinks the bar. Uses gApp.fonts[0]/font_scale
+ *  directly (the g* aliases are defined further down). */
+static void DrawQpChart(Clay_BoundingBox bb)
+{
+    Font  font   = gApp.fonts[0];
+    float fs     = gApp.font_scale;
+    int   po     = gApp.qp_pass_only ? 1 : 0;
+    bool  has_sim = (gApp.sandbox_override_count > 0);
+
+    typedef struct { int t; float aqp, sqp, acpa; int acr; } QRow;
+    QRow rw[sizeSubjectType];
+    int  n = 0;
+    for (int t = 1; t < sizeSubjectType; t++) {
+        if (gApp.type_name[t][0] == 0 ||
+            gApp.player.numofSubjectType[t].Total_Subject == 0) continue;
+        QpCategory a = calc_qp_type(&gApp.player, t, po, 0);
+        QpCategory s = calc_qp_type(&gApp.player, t, po, 1);
+        rw[n].t = t; rw[n].aqp = a.qp; rw[n].sqp = s.qp;
+        rw[n].acpa = a.cpa; rw[n].acr = a.credits; n++;
+    }
+    if (n == 0) return;
+    for (int i = 0; i < n; i++)                       /* insertion sort, n tiny */
+        for (int j = i + 1; j < n; j++)
+            if (rw[j].aqp > rw[i].aqp) { QRow tmp = rw[i]; rw[i] = rw[j]; rw[j] = tmp; }
+
+    int   lev = (rw[0].aqp > 0.f) ? 0 : -1;
+    int   drag = -1; float mn = 1e9f;
+    for (int i = 0; i < n; i++)
+        if (rw[i].acr > 0 && rw[i].acpa < mn) { mn = rw[i].acpa; drag = i; }
+
+    float maxqp = 1.f;
+    for (int i = 0; i < n; i++) {
+        if (rw[i].aqp > maxqp) maxqp = rw[i].aqp;
+        if (has_sim && rw[i].sqp > maxqp) maxqp = rw[i].sqp;
+    }
+
+    const float padL = 150.f, padR = 58.f, padT = 8.f, padB = 8.f;
+    float x  = bb.x + padL, y = bb.y + padT;
+    float cw = bb.width - padL - padR, ch = bb.height - padT - padB;
+    if (cw < 20.f || ch < 10.f) return;
+
+    float slot = ch / (float)n;
+    float barH = slot * 0.5f;
+    if (barH > 16.f) barH = 16.f;
+    if (barH < 5.f)  barH = 5.f;
+    float lsz = 9.f * fs;
+    Color track = RcA(C_BORDER, 120);
+
+    for (int i = 0; i < n; i++) {
+        float cy = y + slot * ((float)i + 0.5f);
+
+        /* category label, right-aligned in the gutter, truncated to fit */
+        char nm[48];
+        snprintf(nm, sizeof nm, "%s", gApp.type_name[rw[i].t]);
+        Vector2 tw = MeasureTextEx(font, nm, lsz, 1.f);
+        while (tw.x > padL - 14.f && strlen(nm) > 3) {
+            nm[strlen(nm) - 1] = '\0';
+            tw = MeasureTextEx(font, nm, lsz, 1.f);
+        }
+        DrawTextEx(font, nm, (Vector2){ x - tw.x - 8.f, cy - tw.y * 0.5f }, lsz, 1.f, Rc(C_TEXT));
+
+        /* full-length track + actual bar */
+        DrawRectangleRec((Rectangle){ x, cy - barH * 0.5f, cw, barH }, track);
+        float aw  = cw * (rw[i].aqp / maxqp);
+        Color bar = (i == lev) ? Rc(C_GREEN) : (i == drag) ? Rc(C_RED) : Rc(C_ACCENT);
+        DrawRectangleRec((Rectangle){ x, cy - barH * 0.5f, aw, barH }, bar);
+
+        /* simulated overlay outline */
+        if (has_sim) {
+            float sw = cw * (rw[i].sqp / maxqp);
+            DrawRectangleLinesEx((Rectangle){ x, cy - barH * 0.5f - 2.f, sw, barH + 4.f },
+                                 1.5f, Rc(C_YELLOW));
+        }
+
+        /* numeric value in the right gutter (simulated when changed) */
+        bool  changed = has_sim && (rw[i].sqp - rw[i].aqp > 0.05f || rw[i].aqp - rw[i].sqp > 0.05f);
+        float val     = changed ? rw[i].sqp : rw[i].aqp;
+        Color vcol    = !changed ? Rc(C_SUBTEXT)
+                       : (rw[i].sqp > rw[i].aqp ? Rc(C_GREEN) : Rc(C_RED));
+        char vl[16];
+        snprintf(vl, sizeof vl, "%.1f", val);
+        DrawTextEx(font, vl, (Vector2){ x + cw + 6.f, cy - lsz * 0.5f }, lsz, 1.f, vcol);
+    }
+}
+
 /* Round an integer maximum up to a clean axis top, returning divisions too. */
 static void term_int_scale(int maxv, float *ymax, int *ydivs)
 {
@@ -207,6 +297,8 @@ void ReturnToNameInput(void)
     gApp.sandbox_override_count = 0;
     gApp.draft_override_count = 0;
     gApp.sandbox_dirty = false;
+    gApp.qp_pass_only = false;
+    gApp.qp_show_retakes = false;
     gApp.compare_focused = false;
     gApp.compare_input[0] = '\0';
     gApp.compare_input_len = 0;
@@ -1224,6 +1316,14 @@ static void UpdateDrawFrame(void)
                     legY += 24.f;
                 }
             }
+        }
+
+        /* ── Quality-points bars (Planner analyzer page only) ── */
+        if (gDBReady && !gNameInput && gActiveNav == NAV_PLANNER) {
+            Clay_ElementData qd = Clay_GetElementData(
+                Clay_GetElementId(CLAY_STRING(QP_CHART_ID)));
+            if (qd.found && qd.boundingBox.width > 20.f)
+                DrawQpChart(qd.boundingBox);
         }
 
         /* FPS counter */

@@ -1964,6 +1964,23 @@ static int plan_item_cmp(const void *a, const void *b)
     return (int)y->node->credit - (int)x->node->credit;            /* credit ↓  */
 }
 
+/* One category's quality-points row for the leverage/impact table. */
+typedef struct {
+    int        type;
+    QpCategory act;   /* real grades                              */
+    QpCategory sim;   /* with committed sandbox overrides applied  */
+} QpRow;
+
+/* Sort the leverage table by quality points contributed, descending — the
+ * category doing the most work on the overall CPA sits at the top. */
+static int qp_row_cmp(const void *a, const void *b)
+{
+    const QpRow *x = (const QpRow *)a, *y = (const QpRow *)b;
+    if (x->act.qp < y->act.qp) return  1;
+    if (x->act.qp > y->act.qp) return -1;
+    return 0;
+}
+
 /* The four selectable honor tiers, low → high. */
 static const HonorTier kPlanTiers[4] =
     { HONOR_NORMAL, HONOR_GOOD, HONOR_EXCELLENT, HONOR_GOD };
@@ -2250,6 +2267,425 @@ static void RenderSandboxGradeStepper(int uid, const char *subject_id)
     }
 }
 
+/* A small pill-style toggle button. Returns true on the frame it is clicked. */
+static bool QpToggleBtn(const char *id, Clay_String label, bool active)
+{
+    bool clicked = false;
+    CLAY(CLAY_SID(CS(id)), {
+        .layout = {
+            .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(26) },
+            .padding        = { 12, 12, 0, 0 },
+            .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+        },
+        .backgroundColor = active ? C_ACCENT : (Clay_Hovered() ? C_ROW_HOVER : C_CARD),
+        .cornerRadius    = CLAY_CORNER_RADIUS(4),
+        .border          = { .color = active ? C_ACCENT : C_BORDER,
+                             .width = { .left = 1, .right = 1, .top = 1, .bottom = 1 } },
+    }) {
+        if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) clicked = true;
+        CLAY_TEXT(label, TC(active ? C_WHITE : C_SUBTEXT, 10));
+    }
+    return clicked;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  QUALITY POINTS ANALYZER  (lives on the Planner page)
+ *
+ *  quality_points = grade_point × credits.  Summed per category it reveals
+ *  which group carries the most "leverage" over the overall CPA, and which
+ *  drags it down the hardest.  Reads the committed sandbox overrides so the
+ *  numbers agree with the graduation projection above it.
+ * ═══════════════════════════════════════════════════════════════════════ */
+static void RenderQualityPoints(void)
+{
+    int  po      = gApp.qp_pass_only ? 1 : 0;
+    bool has_sim = (gApp.sandbox_override_count > 0);
+
+    QpCategory ov_a = calc_qp_overall(&gPlayer, po, 0);
+    QpCategory ov_s = calc_qp_overall(&gPlayer, po, 1);
+    float ov_delta  = ov_s.cpa - ov_a.cpa;
+
+    /* Gather one row per active category, ranked by quality points. */
+    QpRow rows[sizeSubjectType];
+    int   nrows = 0;
+    for (int t = 1; t < sizeSubjectType; t++) {
+        if (gTypeName[t][0] == 0 || gPlayer.numofSubjectType[t].Total_Subject == 0)
+            continue;
+        rows[nrows].type = t;
+        rows[nrows].act  = calc_qp_type(&gPlayer, t, po, 0);
+        rows[nrows].sim  = calc_qp_type(&gPlayer, t, po, 1);
+        nrows++;
+    }
+    qsort(rows, (size_t)nrows, sizeof(rows[0]), qp_row_cmp);
+
+    /* Highest leverage = most quality points; biggest drag = lowest CPA among
+     * categories that actually count toward the CPA (credits > 0). */
+    int   lev_idx = (nrows > 0 && rows[0].act.qp > 0.0f) ? 0 : -1;
+    int   drag_idx = -1;
+    float drag_cpa = 1e9f;
+    for (int i = 0; i < nrows; i++) {
+        if (rows[i].act.credits > 0 && rows[i].act.cpa < drag_cpa) {
+            drag_cpa = rows[i].act.cpa;
+            drag_idx = i;
+        }
+    }
+
+    CLAY(CLAY_ID("QpCard"), {
+        .layout = {
+            .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+            .padding         = { 20, 20, 18, 18 },
+            .childGap        = SP_MD,
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+        },
+        .backgroundColor = C_CARD,
+        .cornerRadius    = CLAY_CORNER_RADIUS(6),
+        .border          = { .color = C_ACCENT, .width = { .left = 3, .top = 1, .right = 1, .bottom = 1 } },
+    }) {
+        /* ── Header + all/passed mode toggle ── */
+        CLAY(CLAY_ID("QpHdr"), {
+            .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                        .childGap = SP_SM,
+                        .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                        .layoutDirection = CLAY_LEFT_TO_RIGHT },
+        }) {
+            CLAY_TEXT(CLAY_STRING("Quality Points Analysis"), TC(C_TEXT, 20));
+            CLAY(CLAY_ID("QpHdrSpacer"), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(1) } },
+            }) {}
+            if (QpToggleBtn("QpModeAll",  CLAY_STRING("All attempts"), !gApp.qp_pass_only))
+                gApp.qp_pass_only = false;
+            if (QpToggleBtn("QpModePass", CLAY_STRING("Passed only"),   gApp.qp_pass_only))
+                gApp.qp_pass_only = true;
+        }
+        CLAY_TEXT(AutoWrapString(
+            "Leverage = quality points (grade x credits) a category adds to the "
+            "overall CPA. Zero-credit courses never move the CPA."),
+            TC(C_SUBTEXT, 10));
+
+        /* ── Overall numbers (actual, and simulated when a sandbox is active) ── */
+        CLAY(CLAY_ID("QpOverall"), {
+            .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                        .childGap = SP_XL,
+                        .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                        .layoutDirection = CLAY_LEFT_TO_RIGHT },
+        }) {
+            CLAY(CLAY_ID("QpOvActual"), {
+                .layout = { .layoutDirection = CLAY_TOP_TO_BOTTOM, .childGap = 2 },
+            }) {
+                CLAY_TEXT(CLAY_STRING("OVERALL CPA"), TC(C_SUBTEXT, 9));
+                CLAY_TEXT(DS("%.2f", ov_a.cpa), TC(C_ACCENT, 30));
+            }
+            if (has_sim) {
+                Clay_Color dcol = (ov_delta >  0.005f) ? C_GREEN
+                                : (ov_delta < -0.005f) ? C_RED : C_SUBTEXT;
+                CLAY(CLAY_ID("QpOvSim"), {
+                    .layout = { .layoutDirection = CLAY_TOP_TO_BOTTOM, .childGap = 2 },
+                }) {
+                    CLAY_TEXT(CLAY_STRING("SIMULATED"), TC(C_SUBTEXT, 9));
+                    CLAY_TEXT(DS("%.2f", ov_s.cpa), TC(dcol, 30));
+                }
+                CLAY(CLAY_ID("QpOvDelta"), {
+                    .layout = { .padding = { 10, 10, 4, 4 },
+                                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
+                    .backgroundColor = (ov_delta >  0.005f) ? C_GREEN_BG
+                                     : (ov_delta < -0.005f) ? C_RED_BG : C_TBL_HDR,
+                    .cornerRadius    = CLAY_CORNER_RADIUS(4),
+                }) {
+                    CLAY_TEXT(DS("%+.2f", ov_delta), TC(dcol, 16));
+                }
+            }
+            CLAY(CLAY_ID("QpOvSpacer"), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(1) } },
+            }) {}
+            CLAY(CLAY_ID("QpOvQp"), {
+                .layout = { .layoutDirection = CLAY_TOP_TO_BOTTOM, .childGap = 2,
+                            .childAlignment = { .x = CLAY_ALIGN_X_RIGHT } },
+            }) {
+                CLAY_TEXT(CLAY_STRING("QUALITY PTS"), TC(C_SUBTEXT, 9));
+                CLAY_TEXT(DS("%.1f", ov_a.qp), TC(C_TEXT, 18));
+            }
+            CLAY(CLAY_ID("QpOvCr"), {
+                .layout = { .layoutDirection = CLAY_TOP_TO_BOTTOM, .childGap = 2,
+                            .childAlignment = { .x = CLAY_ALIGN_X_RIGHT } },
+            }) {
+                CLAY_TEXT(CLAY_STRING("CREDITS"), TC(C_SUBTEXT, 9));
+                CLAY_TEXT(DS("%d", ov_a.credits), TC(C_TEXT, 18));
+            }
+        }
+
+        /* Export the active simulation to its own PDF (separate from the
+         * transcript export). Also reachable via the "export sim" command. */
+        CLAY(CLAY_ID("QpExportRow"), {
+            .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                        .childGap = SP_SM, .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                        .layoutDirection = CLAY_LEFT_TO_RIGHT },
+        }) {
+            CLAY(CLAY_ID("QpExportBtn"), {
+                .layout = { .sizing = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(26) },
+                            .padding = { 12, 12, 0, 0 }, .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
+                .backgroundColor = has_sim ? (Clay_Hovered() ? C_ACCENT : C_ACCENT_BG) : C_CARD,
+                .cornerRadius    = CLAY_CORNER_RADIUS(4),
+                .border          = { .color = has_sim ? C_ACCENT : C_BORDER,
+                                     .width = { .left = 1, .right = 1, .top = 1, .bottom = 1 } },
+            }) {
+                if (has_sim && Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                    char path[512];
+                    PDF_ExportSimulation(path, sizeof path, gResultMsg, sizeof gResultMsg);
+                    ShowToastFor(4.0f);
+                }
+                CLAY_TEXT(CLAY_STRING("Export simulation (PDF)"),
+                          TC(has_sim ? (Clay_Hovered() ? C_WHITE : C_ACCENT) : C_SUBTEXT, 10));
+            }
+            if (!has_sim)
+                CLAY_TEXT(CLAY_STRING("Apply a sandbox change to enable export."), TC(C_SUBTEXT, 9));
+        }
+
+        if (gApp.sandbox_dirty) {
+            CLAY(CLAY_ID("QpPending"), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                            .padding = { 10, 10, 6, 6 } },
+                .backgroundColor = C_YELLOW_BG,
+                .cornerRadius    = CLAY_CORNER_RADIUS(4),
+                .border          = { .color = C_YELLOW, .width = { .left = 3, .top = 1, .right = 1, .bottom = 1 } },
+            }) {
+                CLAY_TEXT(CLAY_STRING("Pending sandbox edits - click Apply & Recalculate to fold them into this analysis."),
+                          TCW(C_TEXT, 10));
+            }
+        }
+
+        /* ── Per-category quality-points bar chart (drawn in main.c) ── */
+        if (nrows > 0) {
+            int chart_h = 34 + nrows * 26;
+            CLAY(CLAY_ID(QP_CHART_ID), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED((float)chart_h) } },
+            }) {}
+        }
+
+        /* ── Leverage / impact table ── */
+        CLAY(CLAY_ID("QpTblHdr"), {
+            .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(24) },
+                        .padding = { 12, 12, 0, 0 }, .childGap = SP_SM,
+                        .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                        .layoutDirection = CLAY_LEFT_TO_RIGHT },
+            .backgroundColor = C_TBL_HDR,
+            .cornerRadius    = CLAY_CORNER_RADIUS(4),
+        }) {
+            CLAY(CLAY_ID("QpThName"), { .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) } } }) {
+                CLAY_TEXT(CLAY_STRING("CATEGORY"), TC(C_SUBTEXT, 9));
+            }
+            CLAY(CLAY_ID("QpThCr"), { .layout = { .sizing = { CLAY_SIZING_FIXED(56), CLAY_SIZING_FIT(0) }, .childAlignment = { .x = CLAY_ALIGN_X_RIGHT } } }) {
+                CLAY_TEXT(CLAY_STRING("CREDITS"), TC(C_SUBTEXT, 9));
+            }
+            CLAY(CLAY_ID("QpThCpa"), { .layout = { .sizing = { CLAY_SIZING_FIXED(52), CLAY_SIZING_FIT(0) }, .childAlignment = { .x = CLAY_ALIGN_X_RIGHT } } }) {
+                CLAY_TEXT(CLAY_STRING("CPA"), TC(C_SUBTEXT, 9));
+            }
+            CLAY(CLAY_ID("QpThQp"), { .layout = { .sizing = { CLAY_SIZING_FIXED(80), CLAY_SIZING_FIT(0) }, .childAlignment = { .x = CLAY_ALIGN_X_RIGHT } } }) {
+                CLAY_TEXT(has_sim ? CLAY_STRING("QUAL PTS (SIM)") : CLAY_STRING("QUAL PTS"), TC(C_SUBTEXT, 9));
+            }
+        }
+
+        for (int i = 0; i < nrows; i++) {
+            int  t       = rows[i].type;
+            bool is_lev  = (i == lev_idx);
+            bool is_drag = (i == drag_idx);
+            bool isOdd   = (i % 2 != 0);
+
+            char gl[2] = { 0, 0 };
+            /* colour the CPA figure on the same A-F scale used elsewhere */
+            float cpa = rows[i].act.cpa;
+            gl[0] = (cpa >= 3.5f) ? 'A' : (cpa >= 2.5f) ? 'B'
+                  : (cpa >= 1.5f) ? 'C' : (cpa > 0.0f)  ? 'D' : 'X';
+
+            Clay_Color rbg  = is_lev ? C_ACCENT_BG : (is_drag ? C_RED_BG : (isOdd ? C_ROW_ODD : C_ROW_EVEN));
+            Clay_Color rbd  = is_lev ? C_ACCENT : (is_drag ? C_RED : C_BORDER);
+            int        rbdw = (is_lev || is_drag) ? 3 : 0;
+
+            CLAY(CLAY_IDI("QpRow", i), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(30) },
+                            .padding = { 12, 12, 0, 0 }, .childGap = SP_SM,
+                            .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                            .layoutDirection = CLAY_LEFT_TO_RIGHT },
+                .backgroundColor = rbg,
+                .border = { .color = rbd, .width = { .left = rbdw, .bottom = 1 } },
+            }) {
+                CLAY(CLAY_IDI("QpRowName", i), {
+                    .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                                .childGap = SP_SM, .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                                .layoutDirection = CLAY_LEFT_TO_RIGHT },
+                }) {
+                    CLAY_TEXT(CS(gTypeName[t]), TC(C_TEXT, 11));
+                    if (is_lev) {
+                        CLAY(CLAY_IDI("QpLevBadge", i), {
+                            .layout = { .padding = { 6, 6, 2, 2 } },
+                            .backgroundColor = C_ACCENT, .cornerRadius = CLAY_CORNER_RADIUS(3),
+                        }) { CLAY_TEXT(CLAY_STRING("LEVERAGE"), TC(C_WHITE, 8)); }
+                    }
+                    if (is_drag) {
+                        CLAY(CLAY_IDI("QpDragBadge", i), {
+                            .layout = { .padding = { 6, 6, 2, 2 } },
+                            .backgroundColor = C_RED, .cornerRadius = CLAY_CORNER_RADIUS(3),
+                        }) { CLAY_TEXT(CLAY_STRING("DRAG"), TC(C_WHITE, 8)); }
+                    }
+                }
+                CLAY(CLAY_IDI("QpRowCr", i), { .layout = { .sizing = { CLAY_SIZING_FIXED(56), CLAY_SIZING_FIT(0) }, .childAlignment = { .x = CLAY_ALIGN_X_RIGHT } } }) {
+                    CLAY_TEXT(DS("%d", rows[i].act.credits), TC(C_SUBTEXT, 10));
+                }
+                CLAY(CLAY_IDI("QpRowCpa", i), { .layout = { .sizing = { CLAY_SIZING_FIXED(52), CLAY_SIZING_FIT(0) }, .childAlignment = { .x = CLAY_ALIGN_X_RIGHT } } }) {
+                    CLAY_TEXT(DS("%.2f", rows[i].act.cpa), TC(score_color(gl), 11));
+                }
+                CLAY(CLAY_IDI("QpRowQp", i), { .layout = { .sizing = { CLAY_SIZING_FIXED(80), CLAY_SIZING_FIT(0) }, .childAlignment = { .x = CLAY_ALIGN_X_RIGHT } } }) {
+                    if (has_sim && (rows[i].sim.qp - rows[i].act.qp > 0.05f ||
+                                    rows[i].act.qp - rows[i].sim.qp > 0.05f)) {
+                        Clay_Color sc = (rows[i].sim.qp > rows[i].act.qp) ? C_GREEN : C_RED;
+                        CLAY_TEXT(DS("%.1f", rows[i].sim.qp), TC(sc, 11));
+                    } else {
+                        CLAY_TEXT(DS("%.1f", rows[i].act.qp), TC(C_TEXT, 11));
+                    }
+                }
+            }
+        }
+
+        if (nrows == 0) {
+            CLAY(CLAY_ID("QpEmpty"), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) }, .padding = { 12, 12, 10, 10 } },
+            }) { CLAY_TEXT(CLAY_STRING("No graded categories yet."), TC(C_SUBTEXT, 11)); }
+        }
+    }
+
+    /* ═══ Retake simulator — change grades of ANY already-passed course ═══ */
+    CLAY(CLAY_ID("QpRetakeCard"), {
+        .layout = {
+            .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+            .padding         = { 20, 20, 16, 16 },
+            .childGap        = SP_MD,
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+        },
+        .backgroundColor = C_CARD,
+        .cornerRadius    = CLAY_CORNER_RADIUS(6),
+        .border          = { .color = C_BORDER, .width = { .left = 3, .top = 1, .right = 1, .bottom = 1 } },
+    }) {
+        CLAY(CLAY_ID("QpRetHdr"), {
+            .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                        .childGap = SP_SM, .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                        .layoutDirection = CLAY_LEFT_TO_RIGHT },
+        }) {
+            CLAY_TEXT(CLAY_STRING("Retake Simulator"), TC(C_TEXT, 14));
+            CLAY(CLAY_ID("QpRetSpacer"), { .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(1) } } }) {}
+            if (QpToggleBtn("QpRetToggle",
+                            gApp.qp_show_retakes ? CLAY_STRING("Hide passed courses")
+                                                 : CLAY_STRING("Show passed courses"),
+                            gApp.qp_show_retakes))
+                gApp.qp_show_retakes = !gApp.qp_show_retakes;
+        }
+        CLAY_TEXT(AutoWrapString(
+            "Simulate re-taking courses you have already passed. Grades are never "
+            "overwritten - edits stay in the shared sandbox until you Apply."),
+            TC(C_SUBTEXT, 10));
+
+        if (gApp.qp_show_retakes) {
+            /* Actions row so the sandbox can be committed/cleared from here too. */
+            if (gApp.sandbox_dirty || gApp.sandbox_override_count > 0 || gApp.draft_override_count > 0) {
+                CLAY(CLAY_ID("QpRetActions"), {
+                    .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                                .childGap = SP_SM, .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                                .layoutDirection = CLAY_LEFT_TO_RIGHT },
+                }) {
+                    if (gApp.sandbox_dirty) {
+                        CLAY(CLAY_ID("QpApplyBtn"), {
+                            .layout = { .sizing = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(26) }, .padding = { 12, 12, 0, 0 }, .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
+                            .backgroundColor = Clay_Hovered() ? C_GREEN : C_GREEN_BG,
+                            .cornerRadius    = CLAY_CORNER_RADIUS(4),
+                        }) {
+                            if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                                memcpy(gApp.sandbox_overrides, gApp.draft_overrides, sizeof(gApp.draft_overrides));
+                                gApp.sandbox_override_count = gApp.draft_override_count;
+                                gApp.sandbox_dirty = false;
+                            }
+                            CLAY_TEXT(CLAY_STRING("Apply & Recalculate"), TC(Clay_Hovered() ? C_WHITE : C_GREEN, 10));
+                        }
+                        CLAY(CLAY_ID("QpDiscardBtn"), {
+                            .layout = { .sizing = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(26) }, .padding = { 12, 12, 0, 0 }, .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
+                            .backgroundColor = Clay_Hovered() ? C_YELLOW : C_YELLOW_BG,
+                            .cornerRadius    = CLAY_CORNER_RADIUS(4),
+                        }) {
+                            if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                                memcpy(gApp.draft_overrides, gApp.sandbox_overrides, sizeof(gApp.sandbox_overrides));
+                                gApp.draft_override_count = gApp.sandbox_override_count;
+                                gApp.sandbox_dirty = false;
+                            }
+                            CLAY_TEXT(CLAY_STRING("Discard"), TC(Clay_Hovered() ? C_WHITE : C_YELLOW, 10));
+                        }
+                    }
+                    CLAY(CLAY_ID("QpResetBtn"), {
+                        .layout = { .sizing = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(26) }, .padding = { 12, 12, 0, 0 }, .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
+                        .backgroundColor = Clay_Hovered() ? C_RED : C_RED_BG,
+                        .cornerRadius    = CLAY_CORNER_RADIUS(4),
+                    }) {
+                        if (Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                            gApp.draft_override_count = 0;
+                            gApp.sandbox_dirty = true;
+                        }
+                        CLAY_TEXT(CLAY_STRING("Reset to actual"), TC(Clay_Hovered() ? C_WHITE : C_RED, 10));
+                    }
+                }
+            }
+
+            int ruid = 0;    /* stepper id space, offset well past the plan list */
+            int shown = 0;
+            for (int t = 1; t < sizeSubjectType; t++) {
+                if (gTypeName[t][0] == 0 || gPlayer.numofSubjectType[t].Total_Subject == 0)
+                    continue;
+                /* does this category hold any passed, credit-bearing course? */
+                int cat_has = 0;
+                for (Subject_Node *n = gPlayer.numofSubjectType[t].head; n; n = n->next)
+                    if (n->status_pass && n->credit > 0) { cat_has = 1; break; }
+                if (!cat_has) continue;
+
+                CLAY(CLAY_IDI("QpRetCat", t), {
+                    .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(22) },
+                                .padding = { 4, 4, 0, 0 }, .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
+                }) { CLAY_TEXT(CS(gTypeName[t]), TC(C_SUBTEXT, 10)); }
+
+                for (Subject_Node *n = gPlayer.numofSubjectType[t].head; n; n = n->next) {
+                    if (!n->status_pass || n->credit <= 0) continue;
+                    int plus = (n->status_ever_been_study & 2) != 0;
+                    char cur[4]; snprintf(cur, sizeof cur, "%c%s", n->score_letter, plus ? "+" : "");
+                    bool isOdd = (ruid % 2 != 0);
+
+                    CLAY(CLAY_IDI("QpRetRow", ruid), {
+                        .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(ROW_H) },
+                                    .padding = { 12, 12, 0, 0 }, .childGap = SP_SM,
+                                    .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                                    .layoutDirection = CLAY_LEFT_TO_RIGHT },
+                        .backgroundColor = isOdd ? C_ROW_ODD : C_ROW_EVEN,
+                        .border = { .color = C_BORDER, .width = { .bottom = 1 } },
+                    }) {
+                        if (!gIsMobile) CLAY_TEXT(DS("%s", n->ID), TC(C_SUBTEXT, 10));
+                        CLAY(CLAY_IDI("QpRetName", ruid), { .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) } } }) {
+                            CLAY_TEXT(DS("%s", n->name), TC(C_TEXT, 11));
+                        }
+                        if (!gIsMobile) CLAY_TEXT(DS("%d cr", n->credit), TC(C_SUBTEXT, 10));
+                        /* current grade chip */
+                        CLAY(CLAY_IDI("QpRetGrade", ruid), {
+                            .layout = { .padding = { 6, 6, 2, 2 } },
+                            .backgroundColor = C_TBL_HDR, .cornerRadius = CLAY_CORNER_RADIUS(3),
+                        }) { CLAY_TEXT(DS("%s", cur), TC(score_color(cur), 10)); }
+                        if (!gIsMobile) CLAY_TEXT(CLAY_STRING("Simulate:"), TC(C_SUBTEXT, 9));
+                        RenderSandboxGradeStepper(3000 + ruid, n->ID);
+                    }
+                    ruid++;
+                    shown++;
+                }
+            }
+            if (shown == 0) {
+                CLAY(CLAY_ID("QpRetEmpty"), {
+                    .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) }, .padding = { 4, 4, 6, 6 } },
+                }) { CLAY_TEXT(CLAY_STRING("No passed credit-bearing courses to simulate yet."), TC(C_SUBTEXT, 11)); }
+            }
+        }
+    }
+}
+
 void RenderPlanner(void)
 {
     HonorProjection hp = honor_project_sandbox(&gPlayer);
@@ -2364,6 +2800,9 @@ void RenderPlanner(void)
                 CLAY_TEXT(CLAY_STRING(STR_PLAN_FINAL_STANDING),
                           TC(C_TEXT, 10));
         }
+
+        /* ── Quality Points Analyzer + retake what-if simulator ── */
+        RenderQualityPoints();
 
         /* ── Target picker ── */
         CLAY(CLAY_ID("PlanPickLbl"), {

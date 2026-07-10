@@ -452,6 +452,105 @@ static PdfGroupMode compose_transcript(PdfDoc *d, PdfGroupMode requested)
     return PDF_GROUP_TYPE;
 }
 
+/* ── Simulation report composition ──────────────────────────────────────── */
+
+/* Locate a subject node by its code across every category; sets *type_out. */
+static Subject_Node *sim_find_subject(Player *p, const char *code, int *type_out)
+{
+    for (int t = 1; t < sizeSubjectType; t++)
+        for (Subject_Node *n = p->numofSubjectType[t].head; n; n = n->next)
+            if (strcmp(n->ID, code) == 0) {
+                if (type_out) *type_out = t;
+                return n;
+            }
+    return NULL;
+}
+
+/* Fill `d` with a report of the committed sandbox overrides: overall CPA
+ * before/after (both modes), the list of changed courses, and per-category
+ * before/after for the categories a change actually moved. */
+static void compose_simulation(PdfDoc *d)
+{
+    Player *p        = &gApp.player;
+    const char *user = gApp.user_name[0] ? gApp.user_name : "student";
+
+    char datebuf[40];
+    time_t now = time(NULL);
+    struct tm *lt = localtime(&now);
+    if (lt) strftime(datebuf, sizeof datebuf, "%Y-%m-%d %H:%M", lt);
+    else    snprintf(datebuf, sizeof datebuf, "unknown");
+
+    pdf_add(d, F_BOLD, 22, 0,  COL_INK,  "CPA Simulation Report");
+    pdf_add(d, F_REG,  11, 8,  COL_GRAY, "Student: %s", user);
+    pdf_add(d, F_REG,   9, 2,  COL_GRAY, "Generated: %s    |    Scale: HUST 4.0", datebuf);
+    pdf_add(d, F_REG,   9, 2,  COL_GRAY,
+            "Hypothetical only - your stored grades are unchanged.");
+
+    int nov = gApp.sandbox_override_count;
+    if (nov <= 0) {
+        pdf_add(d, F_REG, 12, 20, COL_INK,
+                "No simulated changes are active. Open the Planner, adjust grades "
+                "in the sandbox, click Apply & Recalculate, then export again.");
+        return;
+    }
+
+    /* ── Overall CPA, both modes ── */
+    QpCategory a0 = calc_qp_overall(p, 0, 0), s0 = calc_qp_overall(p, 0, 1);
+    QpCategory a1 = calc_qp_overall(p, 1, 0), s1 = calc_qp_overall(p, 1, 1);
+
+    pdf_add(d, F_BOLD, 12, 16, COL_INK, "Overall CPA");
+    pdf_add(d, F_MONO, 10, 5,  COL_INK,
+            "All attempts : %.2f  ->  %.2f   (%+.2f)", a0.cpa, s0.cpa, s0.cpa - a0.cpa);
+    pdf_add(d, F_MONO, 10, 2,  COL_INK,
+            "Passed only  : %.2f  ->  %.2f   (%+.2f)", a1.cpa, s1.cpa, s1.cpa - a1.cpa);
+
+    /* ── Changed courses ── */
+    pdf_add(d, F_BOLD, 12, 16, COL_INK, "Simulated Changes (%d)", nov);
+    pdf_add(d, F_MONO,  9, 10, COL_HDR,
+            "%-9s %-40s %3s  %-5s %-5s", "CODE", "COURSE", "CR", "NOW", "SIM");
+    for (int i = 0; i < nov; i++) {
+        SandboxOverride *ov = &gApp.sandbox_overrides[i];
+        int t = 0;
+        Subject_Node *n = sim_find_subject(p, ov->subject_id, &t);
+        char sim_g[5];
+        snprintf(sim_g, sizeof sim_g, "%c%s", ov->grade_letter, ov->plus ? "+" : "");
+        if (n) {
+            int  plus = (n->status_ever_been_study & 2) != 0;
+            char now_g[5], nm[200];
+            if (n->score_letter == 'X') snprintf(now_g, sizeof now_g, "-");
+            else snprintf(now_g, sizeof now_g, "%c%s", n->score_letter, plus ? "+" : "");
+            ascii_sanitize(n->name, nm, sizeof nm);
+            if (strlen(nm) > 39) { nm[38] = '.'; nm[37] = '.'; nm[39] = '\0'; }
+            pdf_add(d, F_MONO, 9, 2, COL_INK, "%-9s %-40s %3d  %-5s %-5s",
+                    ov->subject_id, nm, (int)n->credit, now_g, sim_g);
+        } else {
+            pdf_add(d, F_MONO, 9, 2, COL_INK, "%-9s %-40s %3s  %-5s %-5s",
+                    ov->subject_id, "(unknown course)", "-", "-", sim_g);
+        }
+    }
+
+    /* ── Per-category before/after (only categories a change moved) ── */
+    pdf_add(d, F_BOLD, 12, 16, COL_INK, "By Category (all attempts)");
+    pdf_add(d, F_MONO,  9, 10, COL_HDR,
+            "%-28s %7s %7s %9s", "CATEGORY", "CPA", "SIM", "d QP");
+    int shown = 0;
+    for (int t = 1; t < sizeSubjectType; t++) {
+        if (gApp.type_name[t][0] == 0 ||
+            p->numofSubjectType[t].Total_Subject == 0) continue;
+        QpCategory a = calc_qp_type(p, t, 0, 0), s = calc_qp_type(p, t, 0, 1);
+        if (a.cpa == s.cpa && a.qp == s.qp) continue;      /* unchanged */
+        char nm[40];
+        ascii_sanitize(gApp.type_name[t], nm, sizeof nm);
+        if (strlen(nm) > 27) { nm[26] = '.'; nm[25] = '.'; nm[27] = '\0'; }
+        pdf_add(d, F_MONO, 9, 2, COL_INK, "%-28s %7.2f %7.2f %+9.1f",
+                nm, a.cpa, s.cpa, s.qp - a.qp);
+        shown++;
+    }
+    if (!shown)
+        pdf_add(d, F_REG, 9, 6, COL_GRAY,
+                "No category CPA moved (changes offset within a category).");
+}
+
 /* ── Optional native "save as" dialog (best effort) ─────────────────────── */
 #if !defined(PLATFORM_WEB)
 /* Run a shell dialog and capture its first stdout line. 1 = a path came back. */
@@ -567,5 +666,73 @@ bool PDF_ExportTranscript(PdfGroupMode mode,
     if (out_path) snprintf(out_path, path_sz, "%s", path);
     if (msg) snprintf(msg, msg_sz, "Exported %s transcript to %s",
                       used == PDF_GROUP_TERM ? "by-term" : "by-type", path);
+    return true;
+}
+
+bool PDF_ExportSimulation(char *out_path, int path_sz, char *msg, int msg_sz)
+{
+    const char *user = gApp.user_name[0] ? gApp.user_name : "student";
+    char path[512];
+
+#if defined(PLATFORM_WEB)
+    snprintf(path, sizeof path, "/persist/simulation_%s.pdf", user);
+#else
+    const char *home = getenv("HOME");
+    char suggest[512];
+    snprintf(suggest, sizeof suggest, "%s/simulation_%s.pdf",
+             home ? home : ".", user);
+    int picked = pdf_pick_path(suggest, path, sizeof path);
+    if (picked == -1) {                              /* user cancelled */
+        if (msg) snprintf(msg, msg_sz, "Export cancelled.");
+        return false;
+    }
+    if (picked == 0)                                 /* headless fallback */
+        snprintf(path, sizeof path, "simulation_%s.pdf", user);
+    ensure_pdf_ext(path, sizeof path);
+#endif
+
+    PdfDoc *doc = calloc(1, sizeof *doc);
+    if (!doc) {
+        if (msg) snprintf(msg, msg_sz, "Export failed: out of memory.");
+        return false;
+    }
+    compose_simulation(doc);
+
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        free(doc);
+        if (msg) snprintf(msg, msg_sz, "Export failed: cannot write %s", path);
+        return false;
+    }
+    bool ok = pdf_write(doc, f);
+    if (fclose(f) != 0) ok = false;
+    free(doc);
+
+    if (!ok) {
+        if (msg) snprintf(msg, msg_sz, "Export failed while writing the PDF.");
+        return false;
+    }
+
+#if defined(PLATFORM_WEB)
+    DB_Persist();                                    /* flush /persist to IDB */
+    EM_ASM({
+        var p = UTF8ToString($0), name = UTF8ToString($1);
+        try {
+            var data = FS.readFile(p);
+            var blob = new Blob([data], { type: 'application/pdf' });
+            var url  = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url; a.download = name;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+        } catch (e) { console.error('PDF download failed', e); }
+    }, path, user);
+#endif
+
+    if (out_path) snprintf(out_path, path_sz, "%s", path);
+    if (msg) snprintf(msg, msg_sz,
+                      gApp.sandbox_override_count > 0
+                          ? "Exported simulation to %s"
+                          : "Exported simulation (no changes active) to %s", path);
     return true;
 }

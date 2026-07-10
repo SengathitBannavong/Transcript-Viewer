@@ -187,6 +187,71 @@ float calc_cpa_type(Player *p, int t, int pass_only)
     return (credits == 0) ? 0.0f : total / (float)credits;
 }
 
+/* ── Quality-points analyzer ─────────────────────────────────────────────
+ *  Same grade→point scale and pass_only semantics as calc_cpa(), but also
+ *  returns the numerator (quality points) so the UI can rank categories by the
+ *  "leverage" each one exerts on the overall CPA. When `simulated` is set the
+ *  committed sandbox overrides (gApp.sandbox_overrides) replace a subject's
+ *  real grade — the same set the Planner projects from, so the analyzer and
+ *  the graduation projection always agree.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/* Committed-override lookup (mirrors ui.c's GetSandboxOverride, kept local so
+ * score_logic owns the math without reaching into the UI layer). */
+static const SandboxOverride *sl_committed_override(const char *subject_id)
+{
+    for (int i = 0; i < gApp.sandbox_override_count; i++)
+        if (strcmp(gApp.sandbox_overrides[i].subject_id, subject_id) == 0)
+            return &gApp.sandbox_overrides[i];
+    return NULL;
+}
+
+/* Accumulate one subject into a QpCategory under the given flags. */
+static void sl_qp_accumulate(QpCategory *acc, const Subject_Node *cur,
+                             int pass_only, int simulated)
+{
+    char letter  = cur->score_letter;
+    int  plus    = (cur->status_ever_been_study & 2) != 0;
+    int  studied = (int)(cur->status_ever_been_study & 1);
+    int  is_pass = (int)cur->status_pass;
+
+    if (simulated) {
+        const SandboxOverride *ov = sl_committed_override(cur->ID);
+        if (ov && ov->grade_letter != 0) {
+            letter  = ov->grade_letter;
+            plus    = ov->plus;
+            is_pass = (ov->grade_letter != 'F');   /* F is the only fail grade */
+            studied = 1;                           /* a simulated grade counts */
+        }
+    }
+
+    int use = pass_only ? is_pass : studied;
+    if (use) {
+        acc->qp      += score_to_gpa(letter, plus) * (float)cur->credit;
+        acc->credits += (int)cur->credit;          /* 0-credit adds nothing    */
+    }
+}
+
+QpCategory calc_qp_type(Player *p, int t, int pass_only, int simulated)
+{
+    QpCategory r = { 0, 0.0f, 0.0f };
+    if (t < 0 || t >= sizeSubjectType) return r;
+    for (Subject_Node *cur = p->numofSubjectType[t].head; cur; cur = cur->next)
+        sl_qp_accumulate(&r, cur, pass_only, simulated);
+    r.cpa = (r.credits == 0) ? 0.0f : r.qp / (float)r.credits;
+    return r;
+}
+
+QpCategory calc_qp_overall(Player *p, int pass_only, int simulated)
+{
+    QpCategory r = { 0, 0.0f, 0.0f };
+    for (int i = 0; i < sizeSubjectType; i++)
+        for (Subject_Node *cur = p->numofSubjectType[i].head; cur; cur = cur->next)
+            sl_qp_accumulate(&r, cur, pass_only, simulated);
+    r.cpa = (r.credits == 0) ? 0.0f : r.qp / (float)r.credits;
+    return r;
+}
+
 /* ── Effective credits toward graduation ─────────────────────────────────
  *  Respects the module-choice rules:
  *    • modules I / II / III — only the BEST one counts

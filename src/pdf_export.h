@@ -35,3 +35,10 @@ bool PDF_TermsAvailable(void);
 
 bool PDF_ExportTranscript(PdfGroupMode mode,
                           char *out_path, int path_sz, char *msg, int msg_sz);
+
+/* Export the active what-if simulation (the committed sandbox overrides) to its
+ * own "simulation_<user>.pdf": actual vs simulated CPA, every changed course
+ * (old -> new grade), and per-category before/after. Independent of the
+ * transcript export. With no overrides active it writes a short "no changes"
+ * note. Same out_path/msg contract as PDF_ExportTranscript. */
+bool PDF_ExportSimulation(char *out_path, int path_sz, char *msg, int msg_sz);
