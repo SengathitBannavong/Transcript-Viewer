@@ -32,6 +32,41 @@ Stores per-user data in a local **SQLite3** database. No server or internet conn
 
 ---
 
+## Fast install (Linux — one command)
+
+No clone needed. This downloads the source, installs dependencies, compiles a
+self-contained binary (SQLite statically linked in — no runtime `libsqlite3`
+needed), packs the executable + config into `~/transcript-viewer-linux/`, and
+registers a **`ctt`** command that launches the app from there:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SengathitBannavong/Transcript-Viewer/main/install.sh | bash
+```
+
+Then reload your shell and start the app with a single command:
+
+```bash
+source ~/.bashrc   # or just open a new terminal
+ctt                # cd's into ~/transcript-viewer-linux and runs ./program
+```
+
+Options (environment variables):
+
+```bash
+# skip the (sudo) dependency step
+curl -fsSL .../install.sh | SKIP_DEPS=1 bash
+
+# install to a different directory / from a different branch
+curl -fsSL .../install.sh | INSTALL_DIR=~/somewhere TV_BRANCH=main bash
+```
+
+Your `db_<username>.db` files live in the install directory and are **preserved
+across re-installs**. Supports `dnf` / `apt` / `pacman` / `zypper` for the
+dependency step. Already cloned the repo? Just run `./install.sh` — it builds
+from your local checkout instead of downloading.
+
+---
+
 ## Setup (Linux)
 
 ### 1. Install system packages
