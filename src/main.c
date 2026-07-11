@@ -213,6 +213,169 @@ static void DrawQpChart(Clay_BoundingBox bb)
     }
 }
 
+/* ── Drag-effect diverging bars (Planner analyzer) ────────────────────────
+ *  One horizontal bar per CPA-affecting category, showing how hard it pulls
+ *  the overall CPA up or down from a central zero baseline:
+ *      drag = (category_CPA - overall_CPA) * category_credits
+ *  Positive bars grow right in the accent colour (pulls CPA up); negative bars
+ *  grow left in red (drags CPA down). Two colours only — no rainbow. Rows are
+ *  sorted most-negative first so the worst drag sits at the top. Categories
+ *  with 0 CPA-affecting credits carry no drag and are omitted.
+ *
+ *  Like the quality-points bars above it, this recalculates against the
+ *  committed sandbox: the solid bar is today's drag, and when a what-if is
+ *  active a yellow outline overlays the simulated drag (which may cross the
+ *  zero line — a retake can flip a category from a drag into a lift). Hovering
+ *  a bar pops a tooltip comparing "now" vs "sim" drag, CPA and credits.
+ *  Uses gApp.fonts[0]/font_scale directly (g* aliases come later). */
+static void DrawDragChart(Clay_BoundingBox bb)
+{
+    Font  font    = gApp.fonts[0];
+    float fs      = gApp.font_scale;
+    int   po      = gApp.qp_pass_only ? 1 : 0;
+    bool  has_sim = (gApp.sandbox_override_count > 0);
+
+    float ov_a = calc_qp_overall(&gApp.player, po, 0).cpa;   /* actual overall */
+    float ov_s = calc_qp_overall(&gApp.player, po, 1).cpa;   /* simulated      */
+
+    typedef struct { int t; float drag, cpa; int cr;        /* actual         */
+                            float sdrag, scpa; int scr; } DRow;   /* simulated */
+    DRow rw[sizeSubjectType];
+    int  n = 0;
+    for (int t = 1; t < sizeSubjectType; t++) {
+        if (gApp.type_name[t][0] == 0 ||
+            gApp.player.numofSubjectType[t].Total_Subject == 0) continue;
+        QpCategory a = calc_qp_type(&gApp.player, t, po, 0);
+        QpCategory s = calc_qp_type(&gApp.player, t, po, 1);
+        if (a.credits == 0 && s.credits == 0) continue;  /* no CPA-credits either way */
+        rw[n].t     = t;
+        rw[n].cpa   = a.cpa;  rw[n].cr  = a.credits;  rw[n].drag  = calc_drag_effect(&a, ov_a);
+        rw[n].scpa  = s.cpa;  rw[n].scr = s.credits;  rw[n].sdrag = calc_drag_effect(&s, ov_s);
+        n++;
+    }
+    if (n == 0) return;
+    for (int i = 0; i < n; i++)                    /* insertion sort, n tiny   */
+        for (int j = i + 1; j < n; j++)
+            if (rw[j].drag < rw[i].drag) { DRow tmp = rw[i]; rw[i] = rw[j]; rw[j] = tmp; }
+
+    float maxmag = 0.001f;                          /* scale to actual AND sim  */
+    for (int i = 0; i < n; i++) {
+        float m = fabsf(rw[i].drag);            if (m > maxmag) maxmag = m;
+        if (has_sim) { m = fabsf(rw[i].sdrag);  if (m > maxmag) maxmag = m; }
+    }
+
+    const float padL = 132.f, padR = 16.f, padT = 6.f, padB = 20.f;
+    float x  = bb.x + padL, y = bb.y + padT;
+    float cw = bb.width - padL - padR, ch = bb.height - padT - padB;
+    if (cw < 60.f || ch < 10.f) return;
+    float zx   = x + cw * 0.5f;                    /* zero baseline (centre)   */
+    float half = cw * 0.5f;
+    float span = half - 48.f;                      /* reserve room for labels  */
+    if (span < half * 0.45f) span = half * 0.45f;
+
+    float slot = ch / (float)n;
+    float barH = slot * 0.55f;
+    if (barH > 18.f) barH = 18.f;
+    if (barH < 5.f)  barH = 5.f;
+    float lsz = 9.f * fs;
+
+    Color cUp  = Rc(C_ACCENT), cDown = Rc(C_RED);
+    Color axis = Rc(C_BORDER), txt = Rc(C_TEXT), sub = Rc(C_SUBTEXT);
+
+    /* zero baseline + its "0" tick */
+    DrawLineEx((Vector2){ zx, y }, (Vector2){ zx, y + ch }, 1.5f, axis);
+    {
+        Vector2 zs = MeasureTextEx(font, "0", lsz, 1.f);
+        DrawTextEx(font, "0", (Vector2){ zx - zs.x * 0.5f, y + ch + 4.f }, lsz, 1.f, sub);
+    }
+
+    Vector2 mouse = GetMousePosition();
+    int     hover = -1;
+
+    for (int i = 0; i < n; i++) {
+        float cy  = y + slot * ((float)i + 0.5f);
+        bool  neg = rw[i].drag < 0.f;
+        float w   = span * (fabsf(rw[i].drag) / maxmag);
+
+        Rectangle bar = neg ? (Rectangle){ zx - w, cy - barH * 0.5f, w, barH }
+                            : (Rectangle){ zx,     cy - barH * 0.5f, w, barH };
+        DrawRectangleRec(bar, neg ? cDown : cUp);
+
+        /* simulated drag overlay — a yellow outline, on whichever side of zero
+         * the what-if lands (so a fixed category visibly jumps sides) */
+        bool changed = has_sim && fabsf(rw[i].sdrag - rw[i].drag) > 0.05f;
+        if (has_sim) {
+            bool  sneg = rw[i].sdrag < 0.f;
+            float sw   = span * (fabsf(rw[i].sdrag) / maxmag);
+            Rectangle so = sneg ? (Rectangle){ zx - sw, cy - barH*0.5f - 2.f, sw, barH + 4.f }
+                                : (Rectangle){ zx,      cy - barH*0.5f - 2.f, sw, barH + 4.f };
+            DrawRectangleLinesEx(so, 1.5f, Rc(C_YELLOW));
+        }
+
+        /* category label, right-aligned in the left gutter, truncated to fit */
+        char nm[48];
+        snprintf(nm, sizeof nm, "%s", gApp.type_name[rw[i].t]);
+        Vector2 tw = MeasureTextEx(font, nm, lsz, 1.f);
+        while (tw.x > padL - 12.f && strlen(nm) > 3) {
+            nm[strlen(nm) - 1] = '\0';
+            tw = MeasureTextEx(font, nm, lsz, 1.f);
+        }
+        DrawTextEx(font, nm, (Vector2){ (bb.x + padL - 8.f) - tw.x, cy - tw.y * 0.5f },
+                   lsz, 1.f, txt);
+
+        /* signed value just past the actual bar's outer end (green/red when a
+         * what-if moves it up/down, matching the QP chart above) */
+        char vl[24];
+        snprintf(vl, sizeof vl, "%+.1f", rw[i].drag);
+        Vector2 vs = MeasureTextEx(font, vl, lsz, 1.f);
+        float vx = neg ? (zx - w - vs.x - 4.f) : (zx + w + 4.f);
+        Color  vc = changed ? (rw[i].sdrag > rw[i].drag ? cUp : cDown)
+                            : (neg ? cDown : cUp);
+        DrawTextEx(font, vl, (Vector2){ vx, cy - vs.y * 0.5f }, lsz, 1.f, vc);
+
+        if (CheckCollisionPointRec(mouse, (Rectangle){ x, cy - slot * 0.5f, cw, slot }))
+            hover = i;
+    }
+
+    /* hover tooltip: drag / CPA / credits, "now" vs "sim" when a what-if runs */
+    if (hover >= 0) {
+        char lines[4][80];
+        Color lcol[4];
+        int   nl = 0;
+        snprintf(lines[nl], sizeof lines[0], "%s", gApp.type_name[rw[hover].t]);
+        lcol[nl++] = txt;
+        snprintf(lines[nl], sizeof lines[0], "Now:  drag %+.2f  CPA %.2f  %dc",
+                 rw[hover].drag, rw[hover].cpa, rw[hover].cr);
+        lcol[nl++] = sub;
+        if (has_sim) {
+            snprintf(lines[nl], sizeof lines[0], "Sim:  drag %+.2f  CPA %.2f  %dc",
+                     rw[hover].sdrag, rw[hover].scpa, rw[hover].scr);
+            lcol[nl++] = Rc(C_YELLOW);
+        }
+        float tsz = 10.f * fs;
+        float lh  = MeasureTextEx(font, "0", tsz, 1.f).y + 3.f;
+        float bw  = 0.f;
+        for (int k = 0; k < nl; k++) {
+            float wpx = MeasureTextEx(font, lines[k], tsz, 1.f).x;
+            if (wpx > bw) bw = wpx;
+        }
+        bw += 16.f;
+        float bh = lh * (float)nl + 9.f;
+        float bx = mouse.x + 14.f, by = mouse.y + 12.f;
+        if (bx + bw > bb.x + bb.width)  bx = mouse.x - bw - 12.f;
+        if (bx < bb.x)                  bx = bb.x;
+        if (by + bh > bb.y + bb.height) by = mouse.y - bh - 8.f;
+        Rectangle tip = { bx, by, bw, bh };
+        DrawRectangleRounded(tip, 0.10f, 6, Rc(C_CARD));
+        DrawRectangleRoundedLinesEx(tip, 0.10f, 6, 1.5f, Rc(C_ACCENT));
+        float ty = by + 6.f;
+        for (int k = 0; k < nl; k++) {
+            DrawTextEx(font, lines[k], (Vector2){ bx + 8.f, ty }, tsz, 1.f, lcol[k]);
+            ty += lh;
+        }
+    }
+}
+
 /* Round an integer maximum up to a clean axis top, returning divisions too. */
 static void term_int_scale(int maxv, float *ymax, int *ydivs)
 {
@@ -1318,12 +1481,17 @@ static void UpdateDrawFrame(void)
             }
         }
 
-        /* ── Quality-points bars (Planner analyzer page only) ── */
+        /* ── Quality-points + drag-effect bars (Planner analyzer page only) ── */
         if (gDBReady && !gNameInput && gActiveNav == NAV_PLANNER) {
             Clay_ElementData qd = Clay_GetElementData(
                 Clay_GetElementId(CLAY_STRING(QP_CHART_ID)));
             if (qd.found && qd.boundingBox.width > 20.f)
                 DrawQpChart(qd.boundingBox);
+
+            Clay_ElementData dd = Clay_GetElementData(
+                Clay_GetElementId(CLAY_STRING(QP_DRAG_CHART_ID)));
+            if (dd.found && dd.boundingBox.width > 20.f)
+                DrawDragChart(dd.boundingBox);
         }
 
         /* FPS counter */

@@ -2552,6 +2552,171 @@ static void RenderQualityPoints(void)
         }
     }
 
+    /* ═══ Drag-effect diverging chart — how each category moves the CPA ═══
+     *  Complements the leverage chart above: leverage ranks raw volume, this
+     *  shows the *signed* pull each category exerts on the overall CPA:
+     *      drag = (category_CPA - overall_CPA) * category_credits
+     *  Shares the All/Passed toggle above, so it recomputes with the mode. */
+    QpCategory dov   = calc_qp_overall(&gPlayer, po, 0);   /* actual overall CPA */
+    float      dov_s = calc_qp_overall(&gPlayer, po, 1).cpa;/* simulated overall  */
+    float      dov_d = dov_s - dov.cpa;                     /* what-if CPA delta  */
+    int   ndrag = 0, down_t = -1, up_t = -1;
+    float down_v = 0.0f, up_v = 0.0f, biggest_down = 0.0f, biggest_up = 0.0f;
+    for (int t = 1; t < sizeSubjectType; t++) {
+        if (gTypeName[t][0] == 0 || gPlayer.numofSubjectType[t].Total_Subject == 0)
+            continue;
+        QpCategory c  = calc_qp_type(&gPlayer, t, po, 0);
+        QpCategory cs = calc_qp_type(&gPlayer, t, po, 1);
+        if (c.credits == 0 && cs.credits == 0) continue;  /* no drag either way   */
+        ndrag++;                                          /* a chart row appears  */
+        if (c.credits == 0) continue;      /* sandbox-only: no actual drag to rank */
+        float d = calc_drag_effect(&c, dov.cpa);
+        if (down_t < 0 || d < down_v) { down_v = d; down_t = t; }
+        if (up_t   < 0 || d > up_v)   { up_v   = d; up_t   = t; }
+    }
+    biggest_down = down_v;   /* most negative (or 0 if nothing drags down) */
+    biggest_up   = up_v;     /* most positive (or 0 if nothing pulls up)   */
+
+    CLAY(CLAY_ID("QpDragCard"), {
+        .layout = {
+            .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+            .padding         = { 20, 20, 18, 18 },
+            .childGap        = SP_MD,
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+        },
+        .backgroundColor = C_CARD,
+        .cornerRadius    = CLAY_CORNER_RADIUS(6),
+        .border          = { .color = C_ACCENT, .width = { .left = 3, .top = 1, .right = 1, .bottom = 1 } },
+    }) {
+        CLAY(CLAY_ID("QpDragHdr"), {
+            .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                        .childGap = SP_SM, .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                        .layoutDirection = CLAY_LEFT_TO_RIGHT },
+        }) {
+            CLAY_TEXT(CLAY_STRING("Drag Effect"), TC(C_TEXT, 20));
+            CLAY(CLAY_ID("QpDragHdrSpacer"), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(1) } },
+            }) {}
+            CLAY_TEXT(gApp.qp_pass_only ? CLAY_STRING("Passed only")
+                                        : CLAY_STRING("All attempts"),
+                      TC(C_SUBTEXT, 10));
+        }
+        CLAY_TEXT(AutoWrapString(
+            "How far each category pulls the overall CPA up or down = "
+            "(category CPA - overall CPA) x credits. Uses the mode selected above."),
+            TC(C_SUBTEXT, 10));
+
+        /* ── 3 summary stat tiles ── */
+        CLAY(CLAY_ID("QpDragTiles"), {
+            .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                        .childGap = SP_SM, .layoutDirection = CLAY_LEFT_TO_RIGHT },
+        }) {
+            /* Overall CPA */
+            CLAY(CLAY_ID("QpDragTileCpa"), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                            .padding = { 12, 12, 10, 10 }, .childGap = 3,
+                            .layoutDirection = CLAY_TOP_TO_BOTTOM },
+                .backgroundColor = C_TBL_HDR, .cornerRadius = CLAY_CORNER_RADIUS(4),
+            }) {
+                CLAY_TEXT(CLAY_STRING("OVERALL CPA"), TC(C_SUBTEXT, 9));
+                CLAY_TEXT(DS("%.2f", dov.cpa), TC(C_ACCENT, 22));
+                if (has_sim) {
+                    Clay_Color dc = (dov_d >  0.005f) ? C_GREEN
+                                  : (dov_d < -0.005f) ? C_RED : C_SUBTEXT;
+                    CLAY_TEXT(DS("sim %.2f  %+.2f", dov_s, dov_d), TC(dc, 10));
+                }
+            }
+            /* Biggest drag down */
+            CLAY(CLAY_ID("QpDragTileDown"), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                            .padding = { 12, 12, 10, 10 }, .childGap = 3,
+                            .layoutDirection = CLAY_TOP_TO_BOTTOM },
+                .backgroundColor = C_RED_BG, .cornerRadius = CLAY_CORNER_RADIUS(4),
+                .border = { .color = C_RED, .width = { .left = 3, .top = 1, .right = 1, .bottom = 1 } },
+            }) {
+                CLAY_TEXT(CLAY_STRING("BIGGEST DRAG DOWN"), TC(C_SUBTEXT, 9));
+                if (down_t >= 0 && biggest_down < -0.005f) {
+                    CLAY_TEXT(CS(gTypeName[down_t]), TC(C_TEXT, 12));
+                    CLAY_TEXT(DS("%+.1f", biggest_down), TC(C_RED, 18));
+                } else {
+                    CLAY_TEXT(CLAY_STRING("None"), TC(C_SUBTEXT, 12));
+                    CLAY_TEXT(CLAY_STRING("nothing below avg"), TC(C_SUBTEXT, 10));
+                }
+            }
+            /* Biggest pull up */
+            CLAY(CLAY_ID("QpDragTileUp"), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                            .padding = { 12, 12, 10, 10 }, .childGap = 3,
+                            .layoutDirection = CLAY_TOP_TO_BOTTOM },
+                .backgroundColor = C_ACCENT_BG, .cornerRadius = CLAY_CORNER_RADIUS(4),
+                .border = { .color = C_ACCENT, .width = { .left = 3, .top = 1, .right = 1, .bottom = 1 } },
+            }) {
+                CLAY_TEXT(CLAY_STRING("BIGGEST PULL UP"), TC(C_SUBTEXT, 9));
+                if (up_t >= 0 && biggest_up > 0.005f) {
+                    CLAY_TEXT(CS(gTypeName[up_t]), TC(C_TEXT, 12));
+                    CLAY_TEXT(DS("%+.1f", biggest_up), TC(C_ACCENT, 18));
+                } else {
+                    CLAY_TEXT(CLAY_STRING("None"), TC(C_SUBTEXT, 12));
+                    CLAY_TEXT(CLAY_STRING("nothing above avg"), TC(C_SUBTEXT, 10));
+                }
+            }
+        }
+
+        /* ── Legend: two colours only ── */
+        CLAY(CLAY_ID("QpDragLegend"), {
+            .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                        .childGap = SP_LG, .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                        .layoutDirection = CLAY_LEFT_TO_RIGHT },
+        }) {
+            CLAY(CLAY_ID("QpDragLegUp"), {
+                .layout = { .childGap = SP_SM, .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                            .layoutDirection = CLAY_LEFT_TO_RIGHT },
+            }) {
+                CLAY(CLAY_ID("QpDragLegUpSw"), {
+                    .layout = { .sizing = { CLAY_SIZING_FIXED(12), CLAY_SIZING_FIXED(12) } },
+                    .backgroundColor = C_ACCENT, .cornerRadius = CLAY_CORNER_RADIUS(2),
+                }) {}
+                CLAY_TEXT(CLAY_STRING("Pulls CPA up"), TC(C_SUBTEXT, 10));
+            }
+            CLAY(CLAY_ID("QpDragLegDown"), {
+                .layout = { .childGap = SP_SM, .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                            .layoutDirection = CLAY_LEFT_TO_RIGHT },
+            }) {
+                CLAY(CLAY_ID("QpDragLegDownSw"), {
+                    .layout = { .sizing = { CLAY_SIZING_FIXED(12), CLAY_SIZING_FIXED(12) } },
+                    .backgroundColor = C_RED, .cornerRadius = CLAY_CORNER_RADIUS(2),
+                }) {}
+                CLAY_TEXT(CLAY_STRING("Pulls CPA down"), TC(C_SUBTEXT, 10));
+            }
+            if (has_sim) {
+                CLAY(CLAY_ID("QpDragLegSim"), {
+                    .layout = { .childGap = SP_SM, .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                                .layoutDirection = CLAY_LEFT_TO_RIGHT },
+                }) {
+                    CLAY(CLAY_ID("QpDragLegSimSw"), {
+                        .layout = { .sizing = { CLAY_SIZING_FIXED(12), CLAY_SIZING_FIXED(12) } },
+                        .cornerRadius = CLAY_CORNER_RADIUS(2),
+                        .border = { .color = C_YELLOW,
+                                    .width = { .left = 2, .right = 2, .top = 2, .bottom = 2 } },
+                    }) {}
+                    CLAY_TEXT(CLAY_STRING("With sandbox (what-if)"), TC(C_SUBTEXT, 10));
+                }
+            }
+        }
+
+        /* ── Diverging bar chart (drawn in main.c over this box) ── */
+        if (ndrag > 0) {
+            int drag_h = 26 + ndrag * 30;
+            CLAY(CLAY_ID(QP_DRAG_CHART_ID), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED((float)drag_h) } },
+            }) {}
+        } else {
+            CLAY(CLAY_ID("QpDragEmpty"), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) }, .padding = { 12, 12, 10, 10 } },
+            }) { CLAY_TEXT(CLAY_STRING("No CPA-affecting categories yet."), TC(C_SUBTEXT, 11)); }
+        }
+    }
+
     /* ═══ Retake simulator — change grades of ANY already-passed course ═══ */
     CLAY(CLAY_ID("QpRetakeCard"), {
         .layout = {

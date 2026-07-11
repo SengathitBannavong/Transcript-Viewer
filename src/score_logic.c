@@ -252,6 +252,14 @@ QpCategory calc_qp_overall(Player *p, int pass_only, int simulated)
     return r;
 }
 
+/* How hard a single category pulls the overall CPA up (+) or down (-).
+ * A category with no CPA-affecting credits can't shift the average at all. */
+float calc_drag_effect(const QpCategory *cat, float overall_cpa)
+{
+    if (!cat || cat->credits == 0) return 0.0f;
+    return (cat->cpa - overall_cpa) * (float)cat->credits;
+}
+
 /* ── Effective credits toward graduation ─────────────────────────────────
  *  Respects the module-choice rules:
  *    • modules I / II / III — only the BEST one counts

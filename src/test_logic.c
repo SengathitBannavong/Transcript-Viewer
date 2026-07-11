@@ -352,6 +352,84 @@ static void test_qp(void)
     gApp.sandbox_override_count = 0;   /* leave globals clean for later groups */
 }
 
+/* ── 3c. calc_drag_effect (drag-effect diverging chart) ─────────────── */
+static void test_drag_effect(void)
+{
+    GROUP("calc_drag_effect  (pull up/down vs overall, 0-credit exclusion, sum~0)");
+    Player p;
+    memset(&p, 0, sizeof(p));
+    node_pool_reset();
+    gApp.sandbox_override_count = 0;
+
+    /* co_so_nganh:      A  (3c) → CPA 4.0  (above overall → pulls up)   */
+    type_add(&p.numofSubjectType[co_so_nganh],       make_node('A', 0, 3, 1, 1));
+    /* dai_cuong:        C  (2c) → CPA 2.0  (below overall → drags down) */
+    Subject_Node *gnode = make_node('C', 0, 2, 1, 1); strcpy(gnode->ID, "GE101");
+    type_add(&p.numofSubjectType[dai_cuong],         gnode);
+    /* ly_luat_chinh_tri:B  (4c) → CPA 3.0  (just below overall)         */
+    type_add(&p.numofSubjectType[ly_luat_chinh_tri], make_node('B', 0, 4, 1, 1));
+    /* the_thao:         A  (0c) → 0-credit, no drag effect at all       */
+    type_add(&p.numofSubjectType[the_thao],          make_node('A', 0, 0, 1, 1));
+
+    /* overall (all attempts): (12 + 4 + 12) / 9 = 28/9 ≈ 3.1111 */
+    QpCategory ov = calc_qp_overall(&p, 0, 0);
+    FCHECK(ov.cpa, 28.0f/9.0f, "overall CPA = 28/9");
+
+    QpCategory core  = calc_qp_type(&p, co_so_nganh,       0, 0);
+    QpCategory gen   = calc_qp_type(&p, dai_cuong,         0, 0);
+    QpCategory law   = calc_qp_type(&p, ly_luat_chinh_tri, 0, 0);
+    QpCategory sport = calc_qp_type(&p, the_thao,          0, 0);
+
+    float d_core  = calc_drag_effect(&core,  ov.cpa);   /* (4.0-3.111)*3 */
+    float d_gen   = calc_drag_effect(&gen,   ov.cpa);   /* (2.0-3.111)*2 */
+    float d_law   = calc_drag_effect(&law,   ov.cpa);   /* (3.0-3.111)*4 */
+    float d_sport = calc_drag_effect(&sport, ov.cpa);   /* 0-credit → 0   */
+
+    FCHECK(d_core, (4.0f - 28.0f/9.0f) * 3.0f, "co_so drag = (4.0-28/9)*3");
+    FCHECK(d_gen,  (2.0f - 28.0f/9.0f) * 2.0f, "dai_cuong drag = (2.0-28/9)*2");
+    FCHECK(d_law,  (3.0f - 28.0f/9.0f) * 4.0f, "ly_luat drag = (3.0-28/9)*4");
+    CHECK(d_core  > 0.0f, "A-category pulls the CPA UP (drag > 0)");
+    CHECK(d_gen   < 0.0f, "C-category drags the CPA DOWN (drag < 0)");
+    FCHECK(d_sport, 0.0f, "0-credit category has no drag effect (drag = 0)");
+
+    /* the essential invariant: every category's pull nets out to ~0 */
+    float sum = 0.0f;
+    for (int t = 1; t < sizeSubjectType; t++) {
+        if (p.numofSubjectType[t].Total_Subject == 0) continue;
+        QpCategory c = calc_qp_type(&p, t, 0, 0);
+        sum += calc_drag_effect(&c, ov.cpa);
+    }
+    CHECK(fabsf(sum) < 0.001f, "sum of drag effects across categories ~ 0 (sanity check)");
+
+    /* same invariant must hold in passed-only mode too */
+    QpCategory ovp = calc_qp_overall(&p, 1, 0);
+    float sump = 0.0f;
+    for (int t = 1; t < sizeSubjectType; t++) {
+        if (p.numofSubjectType[t].Total_Subject == 0) continue;
+        QpCategory c = calc_qp_type(&p, t, 1, 0);
+        sump += calc_drag_effect(&c, ovp.cpa);
+    }
+    CHECK(fabsf(sump) < 0.001f, "sum of drag effects ~ 0 in passed-only mode too");
+
+    /* the chart also overlays a sandbox what-if — the invariant must survive a
+     * simulated retake (GE101 C→A lifts dai_cuong's CPA, but pulls still net 0) */
+    gApp.sandbox_override_count = 1;
+    strcpy(gApp.sandbox_overrides[0].subject_id, "GE101");
+    gApp.sandbox_overrides[0].grade_letter = 'A';
+    gApp.sandbox_overrides[0].plus         = 0;
+    QpCategory ovs = calc_qp_overall(&p, 0, 1);
+    QpCategory gsim = calc_qp_type(&p, dai_cuong, 0, 1);
+    CHECK(gsim.cpa > gen.cpa, "sandbox retake raises dai_cuong's own CPA (C→A)");
+    float sums = 0.0f;
+    for (int t = 1; t < sizeSubjectType; t++) {
+        if (p.numofSubjectType[t].Total_Subject == 0) continue;
+        QpCategory c = calc_qp_type(&p, t, 0, 1);
+        sums += calc_drag_effect(&c, ovs.cpa);
+    }
+    CHECK(fabsf(sums) < 0.001f, "sum of drag effects ~ 0 under the sandbox what-if too");
+    gApp.sandbox_override_count = 0;   /* leave globals clean for later groups */
+}
+
 /* ── 4. calc_missing_types ─────────────────────────────────────────── */
 static void test_calc_missing_types(void)
 {
@@ -721,6 +799,7 @@ int main(void)
     test_calc_status_alert();
     test_calc_cpa();
     test_qp();
+    test_drag_effect();
     test_calc_missing_types();
     test_calc_effective_credits();
     test_calc_required_credits();

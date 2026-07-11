@@ -54,6 +54,14 @@ typedef struct {
 QpCategory calc_qp_type(Player *p, int t, int pass_only, int simulated);
 QpCategory calc_qp_overall(Player *p, int pass_only, int simulated);
 
+/* ── Drag effect of one category on the overall CPA ─────────────────────────
+ *  drag_effect = (category_CPA - overall_CPA) * category_credits
+ *  >0 => the category pulls the overall CPA UP (its average beats overall);
+ *  <0 => it drags the CPA DOWN. A 0-credit category can't move the CPA, so it
+ *  has no drag effect (returns 0). Summed over every CPA-affecting category the
+ *  result is ~0 — each category's pull is measured against the same overall. */
+float calc_drag_effect(const QpCategory *cat, float overall_cpa);
+
 int _sl_resolve_limit(Player *p, int i);
 int _sl_resolve_pass(Player *p, int i);
 float score_to_gpa(char letter, int plus);

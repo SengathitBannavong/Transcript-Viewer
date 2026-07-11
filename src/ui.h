@@ -33,6 +33,7 @@
 #define TERM_CHART_GPA_ID     "TermChartGPA"      /* semester GPA (line)         */
 #define TERM_CHART_CPA_ID     "TermChartCPA"      /* cumulative CPA (line)       */
 #define QP_CHART_ID           "PlanQpChart"       /* quality points / category (h-bar) */
+#define QP_DRAG_CHART_ID      "PlanQpDragChart"   /* drag effect / category (diverging) */
 
 /* Themes */
 typedef struct {
