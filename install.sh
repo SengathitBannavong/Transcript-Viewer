@@ -12,6 +12,12 @@
 # in statically) → packs the executable + config into ~/transcript-viewer-linux
 # → registers a `ctt` command that launches the app from there.
 #
+# Linux only. Windows users want the prebuilt transcript-viewer-windows.zip
+# from the Releases page — see README.md.
+#
+# No system SQLite is required: the build compiles the bundled amalgamation, so
+# the resulting binary depends only on libc and the GL/X11 stack.
+#
 # Env overrides:
 #   SKIP_DEPS=1                 skip the (sudo) dependency step
 #   INSTALL_DIR=~/somewhere     install to a different directory
@@ -67,7 +73,43 @@ resolve_source() {
     fi
 }
 
+# ── 0b. Platform guard ──────────────────────────────────────────────────────
+# This installer builds the Linux desktop binary and wires a shell command into
+# ~/.bashrc / ~/.zshrc. Windows and macOS need a different route entirely, so
+# say so plainly instead of failing somewhere deep in the build.
+check_platform() {
+    case "$(uname -s 2>/dev/null || echo unknown)" in
+        Linux) return 0 ;;
+        MINGW*|MSYS*|CYGWIN*)
+            warn "This installer is for Linux; you are on Windows."
+            echo
+            info "${B}Recommended — use the prebuilt package:${N}"
+            info "  1. Download transcript-viewer-windows.zip from"
+            info "     https://github.com/${REPO_SLUG}/releases/latest"
+            info "  2. Extract it somewhere writable (Desktop or Documents)."
+            info "  3. Double-click Run-Transcript-Viewer.bat"
+            echo
+            info "${B}Or build from source${N} in an MSYS2 MINGW64 shell:"
+            info "  pacman -S --needed mingw-w64-x86_64-gcc make curl unzip"
+            info "  make          # produces bin/program.exe"
+            echo
+            die "Nothing to do on Windows."
+            ;;
+        Darwin)
+            die "macOS is not supported — the renderer targets X11/OpenGL on Linux."
+            ;;
+        *)
+            warn "Unrecognised platform '$(uname -s)'; continuing as if Linux."
+            return 0
+            ;;
+    esac
+}
+
 # ── 1. Dependencies ─────────────────────────────────────────────────────────
+# NOTE: SQLite is deliberately absent from these lists. The build compiles the
+# bundled SQLite amalgamation itself, so neither sqlite-devel nor libsqlite3 is
+# needed to build or to run. Only the compiler, fetch tools and the GL/X11
+# headers are genuinely required.
 install_deps() {
     if [ "${SKIP_DEPS:-0}" = "1" ]; then
         step "Skipping dependency install (SKIP_DEPS=1)"
@@ -79,19 +121,19 @@ install_deps() {
     [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1 && sudo="sudo"
 
     if command -v dnf >/dev/null 2>&1; then
-        $sudo dnf install -y gcc make curl tar unzip sqlite-devel \
+        $sudo dnf install -y gcc make curl tar unzip \
             mesa-libGL-devel libX11-devel libXrandr-devel libXi-devel \
             libXinerama-devel libXcursor-devel
     elif command -v apt-get >/dev/null 2>&1; then
         $sudo apt-get update
-        $sudo apt-get install -y gcc make curl tar unzip libsqlite3-dev \
+        $sudo apt-get install -y gcc make curl tar unzip \
             libgl1-mesa-dev libx11-dev libxrandr-dev libxi-dev \
             libxinerama-dev libxcursor-dev
     elif command -v pacman >/dev/null 2>&1; then
-        $sudo pacman -S --needed --noconfirm gcc make curl tar unzip sqlite \
+        $sudo pacman -S --needed --noconfirm gcc make curl tar unzip \
             mesa libx11 libxrandr libxi libxinerama libxcursor
     elif command -v zypper >/dev/null 2>&1; then
-        $sudo zypper install -y gcc make curl tar unzip sqlite3-devel \
+        $sudo zypper install -y gcc make curl tar unzip \
             Mesa-libGL-devel libX11-devel libXrandr-devel libXi-devel \
             libXinerama-devel libXcursor-devel
     else
@@ -100,6 +142,21 @@ install_deps() {
         warn "  gcc make curl tar unzip + GL/X11 dev libs (see README.md)."
         die  "Cannot auto-install dependencies."
     fi
+}
+
+# Fail early with a readable message rather than a wall of compiler errors.
+# Runs even under SKIP_DEPS=1, which is exactly when things tend to be missing.
+check_toolchain() {
+    step "Checking the toolchain"
+    local missing=() t
+    for t in gcc make curl tar unzip; do
+        command -v "$t" >/dev/null 2>&1 || missing+=("$t")
+    done
+    if [ "${#missing[@]}" -gt 0 ]; then
+        warn "Missing required tool(s): ${missing[*]}"
+        die  "Install them and re-run (see README.md → Building from source)."
+    fi
+    info "gcc, make, curl, tar, unzip — all present"
 }
 
 # ── 2. Compile ──────────────────────────────────────────────────────────────
@@ -235,8 +292,10 @@ main() {
     info "Command: $CMD_NAME"
     echo
 
+    check_platform
     resolve_source
     install_deps
+    check_toolchain
     build
     pack
     ensure_font

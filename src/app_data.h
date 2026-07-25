@@ -60,8 +60,7 @@ typedef struct AppContext {
     bool is_mobile;
     bool drawer_open;
     bool row_hover;
-    bool is_touch;
-    int  active_nav;
+        int  active_nav;
 
     /* 5. Graduation Planner Target Configuration */
     HonorTier plan_target;

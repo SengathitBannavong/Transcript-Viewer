@@ -25,10 +25,15 @@ Stores per-user data in a local **SQLite3** database. No server or internet conn
 |---|---|---|
 | [Raylib](https://github.com/raysan5/raylib) | 5.5 | Window, input, 2-D drawing (fonts, rings, text) |
 | [Clay](https://github.com/nicbarker/clay) | 0.14  | Immediate-mode UI layout engine (single header) |
-| [SQLite3](https://www.sqlite.org) | system | Persistent per-user score database |
+| [SQLite3](https://www.sqlite.org) | 3.46, bundled | Persistent per-user score database |
 | GCC / Clang | any modern | C11 compiler |
 | libGL, libm, libpthread, libdl | system | Required by Raylib on Linux |
 | libX11, libXrandr, libXi, libXinerama, libXcursor | system | Raylib window/input on Linux X11 |
+
+> **SQLite needs no system package on any platform.** The build downloads the
+> official SQLite amalgamation and compiles it straight into the binary, so
+> neither `sqlite-devel` / `libsqlite3-dev` nor a runtime `libsqlite3` is
+> required. Raylib and `clay.h` are fetched automatically the same way.
 
 ---
 
@@ -65,30 +70,37 @@ across re-installs**. Supports `dnf` / `apt` / `pacman` / `zypper` for the
 dependency step. Already cloned the repo? Just run `./install.sh` — it builds
 from your local checkout instead of downloading.
 
+> **Windows users:** this script is Linux-only (it compiles the X11/OpenGL
+> binary and wires a command into your shell rc). Grab the prebuilt
+> `transcript-viewer-windows.zip` instead — see [Setup (Windows)](#setup-windows).
+
 ---
 
 ## Setup (Linux)
 
 ### 1. Install system packages
 
+Only the compiler, the fetch tools and the GL/X11 headers are needed — there is
+no SQLite package in these lists on purpose (see the note under *Dependencies*).
+
 **Debian / Ubuntu**
 ```bash
-sudo apt install gcc libsqlite3-dev libgl-dev libx11-dev \
-     libxrandr-dev libxi-dev libxinerama-dev libxcursor-dev \
-     curl make
+sudo apt install gcc make curl tar unzip \
+     libgl-dev libx11-dev libxrandr-dev libxi-dev \
+     libxinerama-dev libxcursor-dev
 ```
 
 **Arch / Manjaro**
 ```bash
-sudo pacman -S gcc sqlite mesa libx11 libxrandr libxi \
-               libxinerama libxcursor curl make
+sudo pacman -S gcc make curl tar unzip \
+               mesa libx11 libxrandr libxi libxinerama libxcursor
 ```
 
 **Fedora / RHEL**
 ```bash
-sudo dnf install gcc sqlite-devel mesa-libGL-devel libX11-devel \
-     libXrandr-devel libXi-devel libXinerama-devel libXcursor-devel \
-     curl make
+sudo dnf install gcc make curl tar unzip \
+     mesa-libGL-devel libX11-devel libXrandr-devel libXi-devel \
+     libXinerama-devel libXcursor-devel
 ```
 
 ---
@@ -97,20 +109,22 @@ sudo dnf install gcc sqlite-devel mesa-libGL-devel libX11-devel \
 
 ```bash
 git clone <your-repo-url>
-cd clay_project
+cd Transcript-Viewer
 ```
 
 ---
 
 ### 3. Download dependencies (automatic)
 
-The `Makefile` fetches **Raylib 5.5** and **clay.h** automatically if they are missing:
+The `Makefile` fetches **Raylib 5.5**, **clay.h** and the **SQLite amalgamation**
+automatically if they are missing:
 
 ```bash
 make setup
 ```
 
-Or just run `make` — `setup` is a prerequisite of the default target.
+Or just run `make` — each download is a build prerequisite, so it is fetched
+before anything that needs it.
 
 ---
 
@@ -121,54 +135,6 @@ make
 ```
 
 The binary is written to `./bin/program`.
-
----
-
-## Setup (Windows)
-
-Uses `Makefile.win` with **MinGW-w64** (via MSYS2 recommended).  
-SQLite3 is compiled from the official amalgamation — no system package needed.
-
-### 1. Install MSYS2
-
-Download and install from https://www.msys2.org, then open the **MSYS2 MinGW 64-bit** shell and run:
-
-```bash
-pacman -S mingw-w64-x86_64-gcc make curl unzip
-```
-
-### 2. Clone this repository
-
-```bash
-git clone <your-repo-url>
-cd clay_project
-```
-
-### 3. Build
-
-```bash
-make -f Makefile.win
-```
-
-This will automatically download:
-- `raylib-5.5_win64_mingw-w64.zip` (Raylib Windows MinGW build)
-- `clay.h` (single-header Clay UI)
-- `sqlite-amalgamation-*.zip` (SQLite3 source, compiled inline)
-
-The binary is written to `./bin/program.exe`.
-
-### 4. Run
-
-```bash
-./bin/program.exe
-```
-
-Or double-click `bin/program.exe` in Explorer (make sure `assets/` and `Font/` folders are next to `bin/`).
-
-### Notes for Windows
-- `assets/fonts.cfg` paths use forward slashes — both `/` and `\` work in MinGW.
-- System font path example: `C:/Windows/Fonts/arial.ttf`
-- The `-mwindows` linker flag suppresses the console window for release builds. Remove it in `Makefile.win` if you want to see `stderr` output.
 
 ---
 
@@ -201,6 +167,71 @@ Enter any username at the startup screen and press **Enter**.
 
 ---
 
+## Setup (Windows)
+
+### Option A — prebuilt package (recommended)
+
+No compiler, no installer, nothing to set up.
+
+1. Download **`transcript-viewer-windows.zip`** from the
+   [latest release](../../releases/latest).
+2. Extract it to a folder you can write to — your Desktop or Documents.
+   Do **not** run it from inside the `.zip` viewer; the app needs to create
+   `db_<username>.db` next to itself.
+3. Double-click **`Run-Transcript-Viewer.bat`**.
+
+The `.bat` is there because the app resolves `assets/`, `Font/` and the
+database relative to the *working directory*. Launching `program.exe` directly
+from a shortcut or another folder would start it with the wrong one, and the
+config and font would not be found. The `.bat` sets it first.
+
+> Everything is statically linked, so no DLLs or redistributables are needed.
+> The build is unsigned, so SmartScreen may show *"Windows protected your PC"*
+> on first run — choose **More info → Run anyway**.
+
+### Option B — build from source (MSYS2 / MinGW-w64)
+
+**1. Install MSYS2** from https://www.msys2.org, then open the
+**MSYS2 MinGW 64-bit** shell (not the plain MSYS shell — the `MINGW64`
+environment is what provides the Windows-native compiler):
+
+```bash
+pacman -S --needed mingw-w64-x86_64-gcc make curl unzip zip
+```
+
+**2. Clone and build:**
+
+```bash
+git clone <your-repo-url>
+cd Transcript-Viewer
+make
+```
+
+The same `Makefile` serves both platforms — it detects Windows via the `OS`
+environment variable, so there is no separate makefile to pass with `-f`.
+It automatically downloads Raylib (`raylib-5.5_win64_mingw-w64`), `clay.h` and
+the SQLite amalgamation, then writes the binary to `./bin/program.exe`.
+
+**3. Run** from the repository root, so `assets/` and `Font/` resolve:
+
+```bash
+./bin/program.exe
+```
+
+### Notes for Windows
+
+- `assets/fonts.cfg` paths use forward slashes — both `/` and `\` work in MinGW.
+  A system font path such as `C:/Windows/Fonts/arial.ttf` is fine.
+- Keep `program.exe`, `assets/` and `Font/` together, and start the program with
+  that folder as the working directory.
+- The `-mwindows` linker flag suppresses the console window. Drop it from
+  `OS_LDFLAGS` in the `Makefile` if you want to see `stderr` output while
+  debugging.
+- File dialogs use the built-in Windows common dialogs (comdlg32) — no extra
+  tooling, unlike Linux where `zenity`/`kdialog` are used.
+
+---
+
 ## Configuration (`assets/ui.cfg`)
 
 Edit this file and restart the program to apply changes (no recompile needed).
@@ -222,12 +253,14 @@ target_fps 144
 
 Each user's data lives in a single SQLite file (`db_<username>.db`). The **Export**
 and **Import** buttons in the sidebar let you back it up or move it between
-machines (and to/from the web build, which uses the same format).
+machines. The format is identical on Windows and Linux, so a database
+copies across platforms unchanged.
 
 **Export** — saves a copy of the current database.
-- Opens a native *Save file* dialog (`zenity`, falling back to `kdialog`).
-- If neither dialog tool is installed (headless / minimal desktop), the file is
-  copied to `$HOME/db_<username>.db` instead and the destination is shown.
+- Opens a native *Save file* dialog — the standard Windows common dialog, or
+  `zenity` (falling back to `kdialog`) on Linux.
+- If no dialog is available (headless / minimal desktop), the file is copied to
+  your home directory as `db_<username>.db` and the destination is shown.
 
 **Import** — replaces the current user's database with a chosen `.db` file.
 - Opens a native *Open file* dialog, **or** simply **drag a `.db` file onto the
@@ -236,19 +269,18 @@ machines (and to/from the web build, which uses the same format).
   an invalid file is rejected and the current data is left untouched.
 - The table and dashboard refresh immediately after a successful import.
 
-> The native file dialogs use `zenity` (GNOME) or `kdialog` (KDE), which ship with
-> most desktops but are **not** bundled in the AppImage. On a system without
-> either, export falls back to `$HOME` and import works via drag-and-drop — so the
-> feature degrades gracefully. To guarantee the dialogs are available:
+> **Windows** uses the built-in common dialogs (comdlg32) — nothing to install.
+>
+> **Linux** uses `zenity` (GNOME) or `kdialog` (KDE), which ship with most
+> desktops but are **not** bundled in the AppImage. On a system without either,
+> export falls back to your home directory and import works via drag-and-drop —
+> so the feature degrades gracefully. To guarantee the dialogs are available:
 >
 > ```bash
 > # Debian/Ubuntu: sudo apt install zenity
 > # Fedora:        sudo dnf install zenity
 > # Arch:          sudo pacman -S zenity
 > ```
-
-> **Web build:** Export triggers a browser download and Import opens the browser's
-> file picker; the database is stored in the browser (IndexedDB).
 
 ---
 
@@ -265,25 +297,33 @@ Runs 49 unit tests covering CPA calculation, credit counting, graduation logic, 
 ## Project Structure
 
 ```
-clay_project/
-├── main.c              — entry point, globals, keyboard handler, donut rendering
-├── ui.c                — all Clay UI rendering (included into main.c)
-├── db.h                — SQLite backend
-├── score_logic.h       — CPA / graduation / alert computation
-├── cmd.h               — command palette dispatcher
-├── app_data.h          — Player / Subject structs and global instance
-├── struct_table.h      — core struct definitions
-├── test_logic.c        — unit tests (standalone binary)
-├── Makefile            — Linux build
-├── Makefile.win        — Windows build (MinGW-w64 / MSYS2)
+Transcript-Viewer/
+├── src/
+│   ├── main.c              — entry point, globals, keyboard handler, frame loop
+│   ├── ui.c                — all Clay UI rendering
+│   ├── db.c / db.h         — SQLite backend, import/export
+│   ├── score_logic.c/.h    — CPA / graduation / alert computation
+│   ├── cmd.c / cmd.h       — command palette dispatcher
+│   ├── app_config.c/.h     — ui.cfg + fonts.cfg loading
+│   ├── pdf_export.c/.h     — transcript / simulation PDF writer
+│   ├── platform.c/.h       — home directory + native file dialogs per OS
+│   ├── app_data.h          — Player / Subject structs and global instance
+│   ├── struct_table.h      — core struct definitions
+│   ├── clay_renderer_raylib.c/.h — Clay → Raylib draw backend
+│   └── test_logic.c        — unit tests (standalone binary)
+├── Makefile                — Linux *and* Windows build (detects the OS)
+├── install.sh              — one-command Linux installer
 ├── assets/
-│   ├── ui.cfg          — font_scale, target_fps
-│   ├── fonts.cfg       — font search list
-│   ├── subjects.dat    — curriculum data (seeded into new DBs)
-│   └── grad_config.cfg — graduation credit requirements per type
-├── Font/               — bundled OFL-licensed fonts
-└── raylib-5.5_linux_amd64/  — downloaded by make setup
+│   ├── ui.cfg              — font_scale, target_fps
+│   ├── fonts.cfg           — font search list
+│   ├── subjects.dat        — curriculum data (seeded into new DBs)
+│   └── grad_config.cfg     — graduation credit requirements per type
+├── Font/                   — bundled OFL-licensed fonts (not tracked in git)
+├── sqlite3.c / sqlite3.h   — SQLite amalgamation, downloaded by make
+└── raylib-5.5_*/           — downloaded by make
 ```
+
+Only `platform.c` contains OS-specific code; everything else is portable C.
 
 ---
 

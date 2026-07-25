@@ -15,10 +15,6 @@
 #include <stdarg.h>
 #include <math.h>
 
-#if defined(PLATFORM_WEB)
-#include <emscripten/emscripten.h>  /* WebAssembly build drives the frame loop */
-#endif
-
 /* --- Window constants ------------------------------------------------- */
 #define WIN_W  1400
 #define WIN_H   820
@@ -404,7 +400,6 @@ static void term_int_scale(int maxv, float *ymax, int *ydivs)
 #define gIsMobile (gApp.is_mobile)
 #define gDrawerOpen (gApp.drawer_open)
 #define gRowHover (gApp.row_hover)
-#define gIsTouch (gApp.is_touch)
 #define gPlanTarget (gApp.plan_target)
 #define gPlanFlex (gApp.plan_flex)
 #define gEditOpen (gApp.edit_open)
@@ -499,7 +494,6 @@ static void InitPlayerDB(void)
     RefreshPlayer();
     gDBReady   = true;
     gNameInput = false;
-    DB_Persist();   /* web: persist a freshly seeded DB right away */
     char title[64];
     snprintf(title, sizeof(title), "Transcript Viewer  --  %s", gUserName);
     SetWindowTitle(title);
@@ -690,8 +684,8 @@ static void HandleClayError(Clay_ErrorData err)
 }
 
 /* --- Entry point ------------------------------------------------------- */
-/* One frame of update + render. Defined after main(); on web it is invoked
- * by emscripten's requestAnimationFrame loop, on desktop by the while-loop. */
+/* One frame of update + render. Defined after main(); driven by the
+ * while-loop below. */
 static void UpdateDrawFrame(void);
 
 int main(void)
@@ -735,21 +729,7 @@ int main(void)
     Clay_SetMeasureTextFunction(Raylib_MeasureText, gFonts);
     Clay_SetDebugModeEnabled(false);  /* F1 toggles at runtime */
 
-    /* Web: mount IndexedDB-backed storage and load any saved DB before the
-     * user can open one. No-op on desktop. */
-    DB_PersistInit();
-
-#if defined(PLATFORM_WEB)
-    /* Detect touch devices (set by the shell script) → enable the soft-keyboard
-     * bridge for text fields. Desktop web keeps the GLFW keyboard path. */
-    gIsTouch = EM_ASM_INT({ return window.TV_isTouch ? 1 : 0; });
-#endif
-
-    /* Main loop — the per-frame body lives in UpdateDrawFrame() so the
-     * WebAssembly build can let the browser drive it one frame at a time. */
-#if defined(PLATFORM_WEB)
-    emscripten_set_main_loop(UpdateDrawFrame, 0, 1);  /* never returns */
-#else
+    /* Main loop — the per-frame body lives in UpdateDrawFrame(). */
     while (!WindowShouldClose())
         UpdateDrawFrame();
 
@@ -757,82 +737,13 @@ int main(void)
     free(mem);
     DB_Close();
     Clay_Raylib_Close();
-#endif
     return 0;
 }
-
-#if defined(PLATFORM_WEB)
-/* ── Soft-keyboard bridge (touch web only) ────────────────────────────────
- * The hidden HTML <input> in shell.html owns the text while focused; we seed
- * it on open and copy its value back into the C buffer each frame. ASCII is
- * copied directly into HEAPU8 so we depend on no exported runtime helpers. */
-enum { KBD_NONE = 0, KBD_NAME = 1, KBD_CMD = 2 };
-static int gKbdTarget = KBD_NONE;
-
-static void tv_kbd_open(const char *text)
-{
-    EM_ASM({ if (window.TV_kbdOpen) TV_kbdOpen(UTF8ToString($0), "text"); }, text);
-}
-static void tv_kbd_close(void)
-{
-    EM_ASM({ if (window.TV_kbdClose) TV_kbdClose(); });
-}
-/* Copy window.__tvKbdValue (ASCII) into buf[cap]; returns strlen written. */
-static int tv_kbd_pull(char *buf, int cap)
-{
-    return EM_ASM_INT({
-        var s = window.__tvKbdValue || "";
-        var n = 0;
-        for (var k = 0; k < s.length && n < $1 - 1; k++) {
-            var c = s.charCodeAt(k);
-            if (c >= 32 && c < 127) { HEAPU8[$0 + n] = c; n++; }
-        }
-        HEAPU8[$0 + n] = 0;
-        return n;
-    }, buf, cap);
-}
-static int tv_kbd_take_enter(void)
-{
-    return EM_ASM_INT({ var e = window.__tvKbdEnter; window.__tvKbdEnter = 0; return e; });
-}
-
-/* Reconcile the soft keyboard with the current focused text field. */
-static void WebKbdSync(void)
-{
-    if (!gIsTouch) return;
-
-    int desired = gNameInput ? KBD_NAME : (gPopupOpen ? KBD_CMD : KBD_NONE);
-
-    if (desired != gKbdTarget) {
-        if (desired == KBD_NONE)      tv_kbd_close();
-        else if (desired == KBD_NAME) tv_kbd_open(gUserName);
-        else                          tv_kbd_open(gCmdBuf);
-        gKbdTarget = desired;
-    }
-    if (gKbdTarget == KBD_NONE) return;
-
-    if (gKbdTarget == KBD_NAME) {
-        gNameLen = tv_kbd_pull(gUserName, 26);
-        if (gNameLen > 25) gNameLen = 25;
-        if (tv_kbd_take_enter() && gNameLen > 0) InitPlayerDB();
-    } else { /* KBD_CMD */
-        gCmdLen = tv_kbd_pull(gCmdBuf, 256);
-        if (tv_kbd_take_enter() && gCmdLen > 0) {
-            ExecuteCommand(gCmdBuf, &gActiveNav, gFilterDept,
-                           gResultMsg, sizeof(gResultMsg));
-            ShowToastFor(5.f);
-            gPopupOpen       = false;
-            ResetCommandInput();
-        }
-    }
-}
-#endif
 
 /* ── Per-frame update + render ─────────────────────────────────────────── */
 static void UpdateDrawFrame(void)
 {
     {
-        (void)gIsTouch;  /* used only by the web soft-keyboard bridge */
         gScreenW = GetScreenWidth();
         gScreenH = GetScreenHeight();
 
@@ -851,28 +762,7 @@ static void UpdateDrawFrame(void)
 
         HandleKeyboard();
 
-#if defined(PLATFORM_WEB)
-        /* Mirror the focused text field into the mobile soft keyboard. */
-        WebKbdSync();
-#endif
-
-#if defined(PLATFORM_WEB)
-        /* Finish an async .db import once the browser has written the file. */
-        if (gDBReady) {
-            int imp = DB_ImportPoll(gUserName);
-            if (imp == 1) {
-                RefreshPlayer();
-                snprintf(gResultMsg, sizeof(gResultMsg),
-                         "Imported database for %s", gUserName);
-                ShowToastFor(5.f);
-            } else if (imp == -1) {
-                snprintf(gResultMsg, sizeof(gResultMsg),
-                         "Import failed or cancelled");
-                ShowToastFor(5.f);
-            }
-        }
-#else
-        /* Desktop: drag-and-drop a .db file onto the window to import it. */
+        /* Drag-and-drop a .db file onto the window to import it. */
         if (gDBReady && IsFileDropped()) {
             FilePathList dropped = LoadDroppedFiles();
             if (dropped.count > 0) {
@@ -888,7 +778,6 @@ static void UpdateDrawFrame(void)
             }
             UnloadDroppedFiles(dropped);
         }
-#endif
 
         /* expire toast */
         if (gHasResult && (float)GetTime() >= gResultShowUntil)

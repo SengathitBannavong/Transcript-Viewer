@@ -1,6 +1,7 @@
 #include "db.h"
 #include "app_data.h"
 #include "score_logic.h"
+#include "platform.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,42 +13,6 @@
 #define gGradRules (gApp.grad_rules)
 #define gDataWarningsBuf (gApp.data_warnings_buf)
 #define gDataWarnCount (gApp.data_warn_count)
-
-/* ── Web persistence (IDBFS) ─────────────────────────────────────────────
- * On the desktop the SQLite file lives on disk and survives on its own. In a
- * deployed WebAssembly build the working directory is emscripten's in-memory
- * MEMFS, which is wiped on every page reload. To keep transcripts we mount an
- * IndexedDB-backed filesystem (IDBFS) at /persist, store the .db there, load it
- * once at startup, and flush it back after each write. */
-#if defined(PLATFORM_WEB)
-#include <emscripten.h>
-#define DB_PERSIST_DIR "/persist"
-
-/* Mount IDBFS and pull any previously-saved DB from IndexedDB into the FS.
- * Blocks (via ASYNCIFY) until the load finishes, so it MUST run before the
- * first DB_Exists()/DB_Open(). */
-void DB_PersistInit(void)
-{
-    EM_ASM({
-        var dir = UTF8ToString($0);
-        try { FS.mkdir(dir); } catch (e) {}      /* ignore "already exists" */
-        FS.mount(IDBFS, {}, dir);
-        Module.__dbSyncDone = 0;
-        FS.syncfs(true, function (err) { Module.__dbSyncDone = 1; });
-    }, DB_PERSIST_DIR);
-    while (!EM_ASM_INT({ return Module.__dbSyncDone; }))
-        emscripten_sleep(30);
-}
-
-/* Flush the FS back to IndexedDB (fire-and-forget). */
-void DB_Persist(void)
-{
-    EM_ASM({ FS.syncfs(false, function (err) {}); });
-}
-#else
-void DB_PersistInit(void) {}
-void DB_Persist(void)     {}
-#endif
 
 /* ── helpers ─────────────────────────────────────────────────────────── */
 void db_exec(const char *sql)
@@ -85,11 +50,7 @@ static int db_is_pass(const char *l)
 /* Build path "db_<username>.db" into buf (max bufsz) */
 static void db_path(const char *username, char *buf, int bufsz)
 {
-#if defined(PLATFORM_WEB)
-    snprintf(buf, bufsz, DB_PERSIST_DIR "/db_%s.db", username);
-#else
     snprintf(buf, bufsz, "db_%s.db", username);
-#endif
 }
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -117,12 +78,7 @@ int DB_Open(const char *username)
                 path, sqlite3_errmsg(gDB));
         return 0;
     }
-#if defined(PLATFORM_WEB)
-    /* DELETE keeps all data in the single .db file so IDBFS persists it cleanly. */
-    db_exec("PRAGMA journal_mode=DELETE;");
-#else
     db_exec("PRAGMA journal_mode=WAL;");
-#endif
     db_exec("PRAGMA foreign_keys=ON;");
     return 1;
 }
@@ -212,7 +168,6 @@ void DB_Migrate(void)
     if (!db_column_exists("subject_scores", "source")) {
         db_exec("ALTER TABLE subject_scores ADD COLUMN source INTEGER NOT NULL DEFAULT 0;");
         db_exec("UPDATE subject_scores SET source=1 WHERE ever_studied=1;");
-        DB_Persist();
     }
 }
 
@@ -304,7 +259,6 @@ void DB_DeriveScoresFromAttempts(void)
     sqlite3_finalize(best);
     sqlite3_finalize(upd);
     db_exec("COMMIT;");
-    DB_Persist();
 }
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -635,7 +589,6 @@ void DB_ApplyMinPassRule(void)
         "AND (mid < %.1f OR final < %.1f);",
         (double)MIN_PASS_SCORE, (double)MIN_PASS_SCORE);
     db_exec(sql);
-    if (sqlite3_changes(gDB) > 0) DB_Persist();   /* web: persist the fix */
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -757,7 +710,6 @@ void DB_ReloadData(void)
     memset(gTypeName, 0, sizeof(gTypeName));
     DB_LoadGradRules();
     DB_ValidateData();
-    DB_Persist();   /* web: flush rebuilt DB to IndexedDB */
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -962,7 +914,6 @@ int DB_UpdateScoreRatio(const char *code, float mid_, float final_, int ratio_se
     int rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
     int changed = (rc == SQLITE_DONE) ? sqlite3_changes(gDB) : 0;
-    if (changed) DB_Persist();   /* web: flush to IndexedDB */
     return changed;
 }
 
@@ -1091,7 +1042,7 @@ int DB_GetSubjectCredits(const char *code)
  * ───────────────────────────────────────────────────────────────────── */
 void DB_Close(void)
 {
-    if(gDB){ sqlite3_close(gDB); gDB=NULL; DB_Persist(); }
+    if(gDB){ sqlite3_close(gDB); gDB=NULL; }
 }
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -1140,12 +1091,7 @@ int LoadPlayerFromName(const char *username, Player *out_player)
 int GetAvailableUsers(char names[16][32])
 {
     int count = 0;
-    const char *dir_path = ".";
-#if defined(PLATFORM_WEB)
-    dir_path = DB_PERSIST_DIR;
-#endif
-
-    DIR *dir = opendir(dir_path);
+    DIR *dir = opendir(".");
     if (!dir) return 0;
 
     struct dirent *entry;
@@ -1176,78 +1122,9 @@ int GetAvailableUsers(char names[16][32])
 }
 
 /* ─────────────────────────────────────────────────────────────────────
- * Web import/export of the .db file.
- *   DB_ExportDownload — push the current DB to the browser as a download.
- *   DB_ImportPick      — open a file picker; chosen file is written to the FS
- *                        asynchronously (poll DB_ImportPoll for completion).
- *   DB_ImportPoll      — 1 = imported & reopened, -1 = error/cancel, 0 = idle.
- * No-ops on desktop, where the .db is just a normal file on disk.
+ * Import / export of the .db file — it is a real file on disk, so this is
+ * a native "pick a path" dialog plus a byte copy.
  * ───────────────────────────────────────────────────────────────────── */
-#if defined(PLATFORM_WEB)
-void DB_ExportDownload(const char *username)
-{
-    char path[128], fname[140];
-    db_path(username, path, sizeof(path));
-    snprintf(fname, sizeof(fname), "db_%s.db", username);
-    DB_Persist();   /* ensure the newest committed state is on the FS */
-    EM_ASM({
-        var path = UTF8ToString($0);
-        var name = UTF8ToString($1);
-        try {
-            var data = FS.readFile(path);
-            var blob = new Blob([data], { type: 'application/x-sqlite3' });
-            var url  = URL.createObjectURL(blob);
-            var a = document.createElement('a');
-            a.href = url; a.download = name;
-            document.body.appendChild(a); a.click(); document.body.removeChild(a);
-            setTimeout(function () { URL.revokeObjectURL(url); }, 0);
-        } catch (e) { console.error('DB export failed:', e); }
-    }, path, fname);
-}
-
-void DB_ImportPick(const char *username)
-{
-    char path[128];
-    db_path(username, path, sizeof(path));
-    EM_ASM({
-        var path = UTF8ToString($0);
-        Module.__dbImport = 1;   /* pending */
-        var input = document.createElement('input');
-        input.type = 'file';
-        input.accept = '.db';
-        input.onchange = function (e) {
-            var file = e.target.files && e.target.files[0];
-            if (!file) { Module.__dbImport = 3; return; }
-            var reader = new FileReader();
-            reader.onload  = function () {
-                try { FS.writeFile(path, new Uint8Array(reader.result)); Module.__dbImport = 2; }
-                catch (err) { console.error(err); Module.__dbImport = 3; }
-            };
-            reader.onerror = function () { Module.__dbImport = 3; };
-            reader.readAsArrayBuffer(file);
-        };
-        input.click();
-    }, path);
-}
-
-int DB_ImportPoll(const char *username)
-{
-    int st = EM_ASM_INT({
-        var v = Module.__dbImport || 0;
-        if (v == 2 || v == 3) Module.__dbImport = 0;   /* consume terminal state */
-        return v;
-    });
-    if (st == 2) {
-        DB_Close();
-        if (!DB_Open(username)) return -1;
-        DB_CreateSchema();        /* tolerate older/partial files */
-        DB_LoadGradRules();
-        DB_Persist();             /* save the imported DB into IndexedDB */
-        return 1;
-    }
-    return (st == 3) ? -1 : 0;
-}
-#else  /* ── desktop import/export: the .db is a real file on disk ───────── */
 
 /* Copy a file byte-for-byte. Returns 1 on success. */
 static int tv_file_copy(const char *src, const char *dst)
@@ -1266,78 +1143,35 @@ static int tv_file_copy(const char *src, const char *dst)
     return ok;
 }
 
-/* True if a program is available on PATH. */
-int tv_have(const char *prog)
-{
-    char cmd[128];
-    snprintf(cmd, sizeof cmd, "command -v %s >/dev/null 2>&1", prog);
-    return system(cmd) == 0;
-}
-
-/* Run a dialog command, capture its first stdout line into out (newline
- * stripped). Returns 1 if a non-empty path was produced (user confirmed). */
-static int tv_dialog(const char *cmd, char *out, size_t n)
-{
-    FILE *p = popen(cmd, "r");
-    if (!p) return 0;
-    out[0] = 0;
-    if (!fgets(out, (int)n, p)) { pclose(p); return 0; }
-    int rc = pclose(p);
-    size_t L = strlen(out);
-    while (L && (out[L-1] == '\n' || out[L-1] == '\r')) out[--L] = 0;
-    return (rc == 0 && L > 0);
-}
-
-/* Native "save file" dialog seeded with a sensible name. 1 = picked. */
+/* Native "save file" / "open file" dialogs for the .db.
+ * 1 = picked, 0 = no dialog available, -1 = cancelled. */
 int DB_PickSavePath(const char *suggest, char *outpath, size_t n)
 {
-    char cmd[1024];
-    if (tv_have("zenity")) {
-        snprintf(cmd, sizeof cmd,
-            "zenity --file-selection --save --confirm-overwrite "
-            "--title='Export transcript database' --filename='%s' 2>/dev/null", suggest);
-        return tv_dialog(cmd, outpath, n);
-    }
-    if (tv_have("kdialog")) {
-        snprintf(cmd, sizeof cmd,
-            "kdialog --getsavefilename '%s' '*.db|SQLite database' 2>/dev/null", suggest);
-        return tv_dialog(cmd, outpath, n);
-    }
-    return 0;
+    return TV_PickSavePath("Export transcript database", suggest,
+                           "SQLite database", "db", outpath, n);
 }
 
-/* Native "open file" dialog. 1 = picked. */
 int DB_PickOpenPath(char *outpath, size_t n)
 {
-    if (tv_have("zenity"))
-        return tv_dialog("zenity --file-selection "
-            "--title='Import transcript database' "
-            "--file-filter='SQLite database | *.db' "
-            "--file-filter='All files | *' 2>/dev/null", outpath, n);
-    if (tv_have("kdialog"))
-        return tv_dialog("kdialog --getopenfilename . '*.db|SQLite database' 2>/dev/null",
-                         outpath, n);
-    return 0;
+    return TV_PickOpenPath("Import transcript database",
+                           "SQLite database", "db", outpath, n);
 }
 
-/* Export: copy the live db file to a user-chosen path. If no dialog tool is
- * installed (headless / minimal desktop) fall back to copying into $HOME.
+/* Export: copy the live db file to a user-chosen path. If no dialog is
+ * available (headless / minimal desktop) fall back to the user's home dir.
  * Returns 1 = ok (outpath holds destination), 0 = copy failed, -1 = cancelled. */
 int DB_ExportFile(const char *username, char *outpath, size_t n)
 {
     char src[256], suggest[512];
     db_path(username, src, sizeof src);
-    const char *home = getenv("HOME");
-    snprintf(suggest, sizeof suggest, "%s/db_%s.db", home ? home : ".", username);
+    snprintf(suggest, sizeof suggest, "%s%cdb_%s.db",
+             TV_HomeDir(), TV_PATH_SEP, username);
 
     char dst[1024];
-    if (DB_PickSavePath(suggest, dst, sizeof dst)) {
-        /* user chose a path */
-    } else if (tv_have("zenity") || tv_have("kdialog")) {
-        return -1;                                   /* dialog ran, cancelled */
-    } else {
-        snprintf(dst, sizeof dst, "%s", suggest);    /* headless fallback → $HOME */
-    }
+    int picked = DB_PickSavePath(suggest, dst, sizeof dst);
+    if (picked == -1) return -1;                     /* dialog ran, cancelled */
+    if (picked == 0)                                 /* headless fallback → home */
+        snprintf(dst, sizeof dst, "%s", suggest);
     if (!tv_file_copy(src, dst)) return 0;
     snprintf(outpath, n, "%s", dst);
     return 1;
@@ -1366,7 +1200,6 @@ int DB_ImportFile(const char *username, const char *src)
     DB_LoadGradRules();
     return 1;
 }
-#endif /* PLATFORM_WEB */
 
 int DB_UpdateGradRule(int type_id, int mode, int limit_val, int group_id)
 {

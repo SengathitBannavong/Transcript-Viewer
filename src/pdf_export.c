@@ -19,9 +19,7 @@
 #include <stdint.h>
 #include <time.h>
 
-#if defined(PLATFORM_WEB)
-#include <emscripten.h>
-#endif
+#include "platform.h"
 
 /* ── Page geometry (A4, PostScript points) ──────────────────────────────── */
 #define PDF_PAGE_W    595.0f
@@ -551,42 +549,13 @@ static void compose_simulation(PdfDoc *d)
                 "No category CPA moved (changes offset within a category).");
 }
 
-/* ── Optional native "save as" dialog (best effort) ─────────────────────── */
-#if !defined(PLATFORM_WEB)
-/* Run a shell dialog and capture its first stdout line. 1 = a path came back. */
-static int pdf_dialog(const char *cmd, char *out, size_t n)
-{
-    FILE *pp = popen(cmd, "r");
-    if (!pp) return 0;
-    out[0] = '\0';
-    if (!fgets(out, (int)n, pp)) { pclose(pp); return 0; }
-    int rc = pclose(pp);
-    size_t L = strlen(out);
-    while (L && (out[L-1] == '\n' || out[L-1] == '\r')) out[--L] = '\0';
-    return (rc == 0 && L > 0);
-}
-
 /* Ask the desktop where to save. Returns 1 = picked (dst filled),
- * 0 = no dialog tool available, -1 = a dialog ran but the user cancelled. */
+ * 0 = no dialog available, -1 = a dialog ran but the user cancelled. */
 static int pdf_pick_path(const char *suggest, char *dst, size_t n)
 {
-    char cmd[1024];
-    if (tv_have("zenity")) {
-        snprintf(cmd, sizeof cmd,
-            "zenity --file-selection --save --confirm-overwrite "
-            "--title='Export transcript to PDF' --filename='%s' "
-            "--file-filter='PDF | *.pdf' 2>/dev/null", suggest);
-        return pdf_dialog(cmd, dst, n) ? 1 : -1;
-    }
-    if (tv_have("kdialog")) {
-        snprintf(cmd, sizeof cmd,
-            "kdialog --getsavefilename '%s' '*.pdf|PDF document' 2>/dev/null",
-            suggest);
-        return pdf_dialog(cmd, dst, n) ? 1 : -1;
-    }
-    return 0;
+    return TV_PickSavePath("Export transcript to PDF", suggest,
+                           "PDF document", "pdf", dst, n);
 }
-#endif
 
 /* Ensure `path` ends in ".pdf". */
 static void ensure_pdf_ext(char *path, int sz)
@@ -607,13 +576,9 @@ bool PDF_ExportTranscript(PdfGroupMode mode,
     const char *user = gApp.user_name[0] ? gApp.user_name : "student";
     char path[512];
 
-#if defined(PLATFORM_WEB)
-    snprintf(path, sizeof path, "/persist/transcript_%s.pdf", user);
-#else
-    const char *home = getenv("HOME");
     char suggest[512];
-    snprintf(suggest, sizeof suggest, "%s/transcript_%s.pdf",
-             home ? home : ".", user);
+    snprintf(suggest, sizeof suggest, "%s%ctranscript_%s.pdf",
+             TV_HomeDir(), TV_PATH_SEP, user);
     int picked = pdf_pick_path(suggest, path, sizeof path);
     if (picked == -1) {                              /* user cancelled */
         if (msg) snprintf(msg, msg_sz, "Export cancelled.");
@@ -622,7 +587,6 @@ bool PDF_ExportTranscript(PdfGroupMode mode,
     if (picked == 0)                                 /* headless fallback */
         snprintf(path, sizeof path, "transcript_%s.pdf", user);
     ensure_pdf_ext(path, sizeof path);
-#endif
 
     PdfDoc *doc = calloc(1, sizeof *doc);
     if (!doc) {
@@ -646,23 +610,6 @@ bool PDF_ExportTranscript(PdfGroupMode mode,
         return false;
     }
 
-#if defined(PLATFORM_WEB)
-    DB_Persist();                                    /* flush /persist to IDB */
-    /* Hand the file to the browser as a download. */
-    EM_ASM({
-        var p = UTF8ToString($0), name = UTF8ToString($1);
-        try {
-            var data = FS.readFile(p);
-            var blob = new Blob([data], { type: 'application/pdf' });
-            var url  = URL.createObjectURL(blob);
-            var a = document.createElement('a');
-            a.href = url; a.download = name;
-            document.body.appendChild(a); a.click(); document.body.removeChild(a);
-            setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
-        } catch (e) { console.error('PDF download failed', e); }
-    }, path, user);
-#endif
-
     if (out_path) snprintf(out_path, path_sz, "%s", path);
     if (msg) snprintf(msg, msg_sz, "Exported %s transcript to %s",
                       used == PDF_GROUP_TERM ? "by-term" : "by-type", path);
@@ -674,13 +621,9 @@ bool PDF_ExportSimulation(char *out_path, int path_sz, char *msg, int msg_sz)
     const char *user = gApp.user_name[0] ? gApp.user_name : "student";
     char path[512];
 
-#if defined(PLATFORM_WEB)
-    snprintf(path, sizeof path, "/persist/simulation_%s.pdf", user);
-#else
-    const char *home = getenv("HOME");
     char suggest[512];
-    snprintf(suggest, sizeof suggest, "%s/simulation_%s.pdf",
-             home ? home : ".", user);
+    snprintf(suggest, sizeof suggest, "%s%csimulation_%s.pdf",
+             TV_HomeDir(), TV_PATH_SEP, user);
     int picked = pdf_pick_path(suggest, path, sizeof path);
     if (picked == -1) {                              /* user cancelled */
         if (msg) snprintf(msg, msg_sz, "Export cancelled.");
@@ -689,7 +632,6 @@ bool PDF_ExportSimulation(char *out_path, int path_sz, char *msg, int msg_sz)
     if (picked == 0)                                 /* headless fallback */
         snprintf(path, sizeof path, "simulation_%s.pdf", user);
     ensure_pdf_ext(path, sizeof path);
-#endif
 
     PdfDoc *doc = calloc(1, sizeof *doc);
     if (!doc) {
@@ -712,22 +654,6 @@ bool PDF_ExportSimulation(char *out_path, int path_sz, char *msg, int msg_sz)
         if (msg) snprintf(msg, msg_sz, "Export failed while writing the PDF.");
         return false;
     }
-
-#if defined(PLATFORM_WEB)
-    DB_Persist();                                    /* flush /persist to IDB */
-    EM_ASM({
-        var p = UTF8ToString($0), name = UTF8ToString($1);
-        try {
-            var data = FS.readFile(p);
-            var blob = new Blob([data], { type: 'application/pdf' });
-            var url  = URL.createObjectURL(blob);
-            var a = document.createElement('a');
-            a.href = url; a.download = name;
-            document.body.appendChild(a); a.click(); document.body.removeChild(a);
-            setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
-        } catch (e) { console.error('PDF download failed', e); }
-    }, path, user);
-#endif
 
     if (out_path) snprintf(out_path, path_sz, "%s", path);
     if (msg) snprintf(msg, msg_sz,

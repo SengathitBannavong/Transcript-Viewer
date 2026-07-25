@@ -132,7 +132,6 @@ void Theme_Apply(int theme_id)
 #define gIsMobile (gApp.is_mobile)
 #define gDrawerOpen (gApp.drawer_open)
 #define gRowHover (gApp.row_hover)
-#define gIsTouch (gApp.is_touch)
 #define gPlanTarget (gApp.plan_target)
 #define gPlanFlex (gApp.plan_flex)
 #define gEditOpen (gApp.edit_open)
@@ -461,17 +460,11 @@ void RenderSidebar(void)
                                      .width = { .left=1,.right=1,.top=1,.bottom=1 } },
             }) {
                 if (gDBReady && Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
-#if defined(PLATFORM_WEB)
-                    DB_ExportDownload(gUserName);
-                    snprintf(gResultMsg, sizeof(gResultMsg),
-                             STR_DB_EXPORT_WEB_MSG, gUserName);
-#else
                     char dest[1024];
                     int rc = DB_ExportFile(gUserName, dest, sizeof dest);
                     if (rc == 1)       snprintf(gResultMsg, sizeof(gResultMsg), STR_DB_EXPORT_SUCCESS, dest);
                     else if (rc == -1) snprintf(gResultMsg, sizeof(gResultMsg), STR_DB_EXPORT_CANCEL);
                     else               snprintf(gResultMsg, sizeof(gResultMsg), STR_DB_EXPORT_FAIL);
-#endif
                     ShowToastFor(4.f);
                 }
                 CLAY_TEXT(CLAY_STRING(STR_DB_EXPORT_BTN), TC(C_TEXT, 10));
@@ -488,25 +481,22 @@ void RenderSidebar(void)
                                      .width = { .left=1,.right=1,.top=1,.bottom=1 } },
             }) {
                 if (gDBReady && Clay_Hovered() && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
-#if defined(PLATFORM_WEB)
-                    DB_ImportPick(gUserName);
-#else
                     char src[1024];
-                    if (DB_PickOpenPath(src, sizeof src)) {
+                    int pick = DB_PickOpenPath(src, sizeof src);
+                    if (pick == 1) {
                         if (DB_ImportFile(gUserName, src)) {
                             RefreshPlayer();
                             snprintf(gResultMsg, sizeof(gResultMsg), STR_DB_IMPORT_SUCCESS, src);
                         } else {
                             snprintf(gResultMsg, sizeof(gResultMsg), STR_DB_IMPORT_FAIL);
                         }
-                    } else if (tv_have("zenity") || tv_have("kdialog")) {
+                    } else if (pick == -1) {
                         snprintf(gResultMsg, sizeof(gResultMsg), STR_DB_IMPORT_CANCEL);
                     } else {
                         snprintf(gResultMsg, sizeof(gResultMsg),
                                  STR_DB_IMPORT_NO_DIALOG);
                     }
                     ShowToastFor(4.f);
-#endif
                 }
                 CLAY_TEXT(CLAY_STRING(STR_DB_IMPORT_BTN), TC(C_TEXT, 10));
             }

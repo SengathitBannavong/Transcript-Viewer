@@ -39,10 +39,14 @@ jobs:
 
       - name: Download font for package
         run: |
-          mkdir -p Font/Space_Mono/static
+          # Path must match an entry in assets/fonts.cfg, otherwise the app
+          # silently falls back to raylib's built-in bitmap font.
+          mkdir -p Font/Space_Mono
           curl -fsSL \
             "https://github.com/google/fonts/raw/main/ofl/spacemono/SpaceMono-Bold.ttf" \
-            -o Font/Space_Mono/static/SpaceMono-Bold.ttf
+            -o Font/Space_Mono/SpaceMono-Bold.ttf
+          grep -qxF "Font/Space_Mono/SpaceMono-Bold.ttf" assets/fonts.cfg \
+            || { echo "ERROR: downloaded font path is not listed in assets/fonts.cfg"; exit 1; }
 
       - name: Package
         run: |
@@ -80,6 +84,7 @@ jobs:
         with:
           msystem: MINGW64
           update: true
+          cache: true
           install: >-
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-binutils
@@ -87,6 +92,7 @@ jobs:
             curl
             unzip
             zip
+            file
 
       - name: Build
         run: make
@@ -97,55 +103,84 @@ jobs:
           ls -la bin/
           echo "=== Checking program.exe ==="
           file bin/program.exe
+          file bin/program.exe | grep -q "PE32+ executable" \
+            || { echo "ERROR: bin/program.exe is not a 64-bit Windows executable"; exit 1; }
+
+      - name: Strip binary
+        run: strip bin/program.exe
+
+      - name: Verify no MinGW runtime DLLs are required
+        run: |
+          # The Windows link is fully static (-static in the Makefile), so the
+          # .exe must only import DLLs that ship with Windows itself. Anything
+          # from /mingw64/bin would have to be bundled — fail loudly instead of
+          # shipping a package that dies with "libgcc_s_seh-1.dll not found".
+          echo "=== DLLs imported by program.exe ==="
+          objdump -p bin/program.exe | awk '/DLL Name/ {print $3}' | sort -u | tee imports.txt
+
+          missing=0
+          while read -r dll; do
+            if [ -f "/mingw64/bin/$dll" ]; then
+              echo "NON-SYSTEM DLL required: $dll"
+              missing=1
+            fi
+          done < imports.txt
+
+          if [ "$missing" -ne 0 ]; then
+            echo "ERROR: program.exe depends on MinGW DLLs; the static link did not take effect."
+            exit 1
+          fi
+          echo "OK: only Windows system DLLs are required."
 
       - name: Download font for package
         run: |
-          mkdir -p Font/Space_Mono/static
+          # Path must match an entry in assets/fonts.cfg, otherwise the app
+          # silently falls back to raylib's built-in bitmap font.
+          mkdir -p Font/Space_Mono
           curl -fsSL \
             "https://github.com/google/fonts/raw/main/ofl/spacemono/SpaceMono-Bold.ttf" \
-            -o Font/Space_Mono/static/SpaceMono-Bold.ttf
-
-      - name: Collect required DLLs
-        run: |
-          # รันบน msys2 shell — objdump พร้อมใช้งานทันที
-          mkdir -p bin/dlls
-          MINGW_BIN=/mingw64/bin
-
-          echo "=== DLLs needed by program.exe ==="
-          objdump -p bin/program.exe | grep "DLL Name" | awk '{print $3}' | while read dll; do
-            echo "  $dll"
-            src="$MINGW_BIN/$dll"
-            if [ -f "$src" ]; then
-              cp "$src" bin/dlls/
-              echo "  Copied: $dll"
-            else
-              echo "  Skipped (system DLL): $dll"
-            fi
-          done
-
-          echo "=== Collected DLLs ==="
-          ls -la bin/dlls/
+            -o Font/Space_Mono/SpaceMono-Bold.ttf
+          grep -qxF "Font/Space_Mono/SpaceMono-Bold.ttf" assets/fonts.cfg \
+            || { echo "ERROR: downloaded font path is not listed in assets/fonts.cfg"; exit 1; }
 
       - name: Package
         run: |
           PKG=transcript-viewer-windows
           mkdir -p dist/$PKG
 
-          # Copy binary
           cp bin/program.exe     dist/$PKG/
-
-          # Copy collected DLLs
-          if [ -d bin/dlls ] && [ "$(ls -A bin/dlls)" ]; then
-            cp bin/dlls/*.dll    dist/$PKG/
-          fi
-
-          # Copy assets and extras
           cp -r assets           dist/$PKG/
           cp -r Font             dist/$PKG/
           cp README.md           dist/$PKG/
           cp LICENSE.md          dist/$PKG/
 
-          # Zip
+          # program.exe resolves assets/ and Font/ relative to the working
+          # directory, so launching it from anywhere but the extracted folder
+          # loses the font and config. The .bat pins the cwd first.
+          printf '%s\r\n' \
+            '@echo off' \
+            'cd /d "%~dp0"' \
+            'start "" "%~dp0program.exe"' \
+            > dist/$PKG/Run-Transcript-Viewer.bat
+
+          printf '%s\r\n' \
+            'Transcript Viewer - Windows' \
+            '===========================' \
+            '' \
+            '1. Extract this whole folder somewhere you can write to' \
+            '   (Desktop or Documents - not straight from inside the .zip).' \
+            '2. Double-click Run-Transcript-Viewer.bat' \
+            '3. Enter your username and press Enter.' \
+            '' \
+            'Keep program.exe, assets\ and Font\ together in the same folder.' \
+            'The app reads them using relative paths and writes db_<user>.db here.' \
+            '' \
+            'No extra installation is needed - all runtime libraries are compiled in.' \
+            '' \
+            'SmartScreen: the build is unsigned, so Windows may show' \
+            '"Windows protected your PC". Click More info -> Run anyway.' \
+            > dist/$PKG/README-WINDOWS.txt
+
           cd dist && zip -r ../$PKG.zip $PKG/
           cd ..
 
@@ -200,12 +235,16 @@ jobs:
             | Windows (x86-64) | `transcript-viewer-windows.zip` |
 
             ### Quick start
-            1. Extract the archive.
+            1. Extract the archive to a writable folder (not straight from inside the .zip).
             2. Edit `assets/fonts.cfg` if you want a different font (Space Mono is bundled).
-            3. Run `program` (Linux) or `program.exe` (Windows).
+            3. Run `./program` (Linux) or double-click `Run-Transcript-Viewer.bat` (Windows).
             4. Enter your username and press **Enter**.
 
-            > **Windows users:** All required DLLs are bundled — no extra installation needed.
+            Keep the binary next to `assets/` and `Font/` — they are loaded via relative paths.
+
+            > **Windows users:** the runtime is statically linked, so no DLLs or installers are
+            > needed. The build is unsigned, so SmartScreen may warn on first run —
+            > choose **More info → Run anyway**. See `README-WINDOWS.txt` in the zip.
 
             See [README.md](https://github.com/${{ github.repository }}/blob/main/README.md) for full setup and usage instructions.
           files: |

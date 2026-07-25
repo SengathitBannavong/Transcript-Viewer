@@ -18,7 +18,6 @@
 #define STR_DB_EXPORT_BTN         "Export .db"
 #define STR_DB_IMPORT_BTN         "Import .db"
 #define STR_DB_RELOAD_BTN         "Reload Config"
-#define STR_DB_EXPORT_WEB_MSG     "Downloading db_%s.db"
 #define STR_DB_EXPORT_SUCCESS     "Exported to %.220s"
 #define STR_DB_EXPORT_CANCEL      "Export cancelled"
 #define STR_DB_EXPORT_FAIL        "Export failed"

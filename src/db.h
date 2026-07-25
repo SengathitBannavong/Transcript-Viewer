@@ -45,17 +45,8 @@ void DB_Close(void);
 int LoadPlayerFromName(const char *username, Player *out_player);
 int GetAvailableUsers(char names[16][32]);
 
-void DB_PersistInit(void);
-void DB_Persist(void);
-
-#if defined(PLATFORM_WEB)
-void DB_ExportDownload(const char *username);
-void DB_ImportPick(const char *username);
-int DB_ImportPoll(const char *username);
-#else
+/* Path pickers: 1 = picked, 0 = no dialog available, -1 = cancelled. */
 int DB_PickSavePath(const char *suggest, char *outpath, size_t n);
 int DB_PickOpenPath(char *outpath, size_t n);
 int DB_ExportFile(const char *username, char *outpath, size_t n);
 int DB_ImportFile(const char *username, const char *src);
-int tv_have(const char *prog);
-#endif
