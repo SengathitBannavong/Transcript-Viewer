@@ -12,8 +12,7 @@
 # in statically) → packs the executable + config into ~/transcript-viewer-linux
 # → registers a `ctt` command that launches the app from there.
 #
-# Linux only. Windows users want the prebuilt transcript-viewer-windows.zip
-# from the Releases page — see README.md.
+# Linux only. Windows users want install.ps1 instead — see README.md.
 #
 # No system SQLite is required: the build compiles the bundled amalgamation, so
 # the resulting binary depends only on libc and the GL/X11 stack.
@@ -83,11 +82,11 @@ check_platform() {
         MINGW*|MSYS*|CYGWIN*)
             warn "This installer is for Linux; you are on Windows."
             echo
-            info "${B}Recommended — use the prebuilt package:${N}"
-            info "  1. Download transcript-viewer-windows.zip from"
-            info "     https://github.com/${REPO_SLUG}/releases/latest"
-            info "  2. Extract it somewhere writable (Desktop or Documents)."
-            info "  3. Double-click Run-Transcript-Viewer.bat"
+            info "${B}Recommended — run this in PowerShell (not MSYS2):${N}"
+            info "  irm https://raw.githubusercontent.com/${REPO_SLUG}/main/install.ps1 | iex"
+            echo
+            info "It fetches the prebuilt release, registers a \`ctt\` command and"
+            info "sidesteps the SmartScreen warning a browser download triggers."
             echo
             info "${B}Or build from source${N} in an MSYS2 MINGW64 shell:"
             info "  pacman -S --needed mingw-w64-x86_64-gcc make curl unzip"

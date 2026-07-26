@@ -71,8 +71,8 @@ dependency step. Already cloned the repo? Just run `./install.sh` — it builds
 from your local checkout instead of downloading.
 
 > **Windows users:** this script is Linux-only (it compiles the X11/OpenGL
-> binary and wires a command into your shell rc). Grab the prebuilt
-> `transcript-viewer-windows.zip` instead — see [Setup (Windows)](#setup-windows).
+> binary and wires a command into your shell rc). Use the PowerShell one-liner
+> instead — see [Setup (Windows)](#setup-windows).
 
 ---
 
@@ -169,16 +169,51 @@ Enter any username at the startup screen and press **Enter**.
 
 ## Setup (Windows)
 
-### Option A — prebuilt package (recommended)
+### Option A — one command in PowerShell (recommended)
 
-No compiler, no installer, nothing to set up.
+No compiler, no clone, no zip to unpack. Open **PowerShell** and run:
+
+```powershell
+irm https://raw.githubusercontent.com/SengathitBannavong/Transcript-Viewer/main/install.ps1 | iex
+```
+
+This downloads the latest release, installs it to
+`%LOCALAPPDATA%\Programs\Transcript-Viewer`, adds a Start Menu entry, and
+registers a **`ctt`** command. Open a new terminal and type:
+
+```powershell
+ctt
+```
+
+Options (environment variables, since `iex` can't take parameters):
+
+```powershell
+# install somewhere else
+$env:INSTALL_DIR = "D:\Apps\TranscriptViewer"; irm .../install.ps1 | iex
+
+# pin a specific release instead of the latest
+$env:TV_VERSION = "v1.2.3"; irm .../install.ps1 | iex
+```
+
+Your `db_<username>.db` files live in the install directory and are
+**preserved across re-installs**. Running the script again upgrades in place.
+
+> **This is also the fix for the antivirus warning.** A file downloaded by a
+> *browser* is tagged with the Mark-of-the-Web, which is what makes Windows
+> throw up *"Windows protected your PC"* on first launch. `Invoke-WebRequest`
+> does not apply that tag, so the installed app just starts. See
+> [Why Windows complains](#why-windows-complains) for the whole story.
+
+### Option B — prebuilt zip (manual)
 
 1. Download **`transcript-viewer-windows.zip`** from the
    [latest release](../../releases/latest).
-2. Extract it to a folder you can write to — your Desktop or Documents.
+2. **Right-click the `.zip` → Properties → tick "Unblock" → OK.** Do this
+   *before* extracting, or every extracted file inherits the untrusted mark.
+3. Extract it to a folder you can write to — your Desktop or Documents.
    Do **not** run it from inside the `.zip` viewer; the app needs to create
    `db_<username>.db` next to itself.
-3. Double-click **`Run-Transcript-Viewer.bat`**.
+4. Double-click **`Run-Transcript-Viewer.bat`**.
 
 The `.bat` is there because the app resolves `assets/`, `Font/` and the
 database relative to the *working directory*. Launching `program.exe` directly
@@ -186,10 +221,25 @@ from a shortcut or another folder would start it with the wrong one, and the
 config and font would not be found. The `.bat` sets it first.
 
 > Everything is statically linked, so no DLLs or redistributables are needed.
-> The build is unsigned, so SmartScreen may show *"Windows protected your PC"*
-> on first run — choose **More info → Run anyway**.
 
-### Option B — build from source (MSYS2 / MinGW-w64)
+### Why Windows complains
+
+Two different mechanisms get blamed for the same thing, and only one of them
+is about the code:
+
+| What you see | Why | What helps |
+|---|---|---|
+| *"Windows protected your PC"* (SmartScreen) | The binary is unsigned **and** your browser tagged the download with the Mark-of-the-Web. SmartScreen has no reputation record for a brand-new file. | Option A avoids the tag entirely. With Option B, **Unblock** the zip first. Otherwise: **More info → Run anyway**. |
+| A detection like `Trojan:Win32/Wacatac` | A **false positive**. Defender's heuristics score any unsigned, statically-linked, low-prevalence C binary as suspicious — MinGW-built executables are a well-known trigger. | Restore it from Windows Security → *Protection history*, and please [report the false positive to Microsoft](https://www.microsoft.com/en-us/wdsi/filesubmission). |
+
+Neither is fixed by shipping a `.exe` installer — an unsigned installer stub is
+flagged *more* often, not less. The only complete fix is an
+[Authenticode code-signing certificate](https://learn.microsoft.com/en-us/windows/security/threat-protection/windows-defender-application-control/deploy-catalog-files-to-support-wdac),
+which costs money this project doesn't spend. Everything here is source-visible
+and reproducible — build it yourself with Option C if you'd rather not trust a
+prebuilt binary.
+
+### Option C — build from source (MSYS2 / MinGW-w64)
 
 **1. Install MSYS2** from https://www.msys2.org, then open the
 **MSYS2 MinGW 64-bit** shell (not the plain MSYS shell — the `MINGW64`
@@ -312,7 +362,8 @@ Transcript-Viewer/
 │   ├── clay_renderer_raylib.c/.h — Clay → Raylib draw backend
 │   └── test_logic.c        — unit tests (standalone binary)
 ├── Makefile                — Linux *and* Windows build (detects the OS)
-├── install.sh              — one-command Linux installer
+├── install.sh              — one-command Linux installer (builds from source)
+├── install.ps1             — one-command Windows installer (fetches the release)
 ├── assets/
 │   ├── ui.cfg              — font_scale, target_fps
 │   ├── fonts.cfg           — font search list

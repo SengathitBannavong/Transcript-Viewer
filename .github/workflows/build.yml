@@ -80,6 +80,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # install.ps1 is served raw from the default branch to `irm | iex`, so a
+      # syntax error ships straight to users with no build step to catch it.
+      # Parse it on a real Windows host before anything else runs.
+      - name: Syntax-check install.ps1
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "$PWD/install.ps1", [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) {
+            $errors | ForEach-Object { Write-Host "::error file=install.ps1,line=$($_.Extent.StartLineNumber)::$($_.Message)" }
+            exit 1
+          }
+          Write-Host "OK: install.ps1 parses cleanly."
+
       - uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
@@ -167,18 +182,41 @@ jobs:
             'Transcript Viewer - Windows' \
             '===========================' \
             '' \
+            'EASIEST: skip this zip entirely. Open PowerShell and run:' \
+            '' \
+            '  irm https://raw.githubusercontent.com/'"$GITHUB_REPOSITORY"'/main/install.ps1 | iex' \
+            '' \
+            'That installs the app, adds a "ctt" command and a Start Menu entry,' \
+            'and avoids the SmartScreen warning described at the bottom.' \
+            '' \
+            'MANUAL (this zip):' \
             '1. Extract this whole folder somewhere you can write to' \
             '   (Desktop or Documents - not straight from inside the .zip).' \
-            '2. Double-click Run-Transcript-Viewer.bat' \
-            '3. Enter your username and press Enter.' \
+            '2. Right-click the .zip -> Properties -> tick "Unblock" BEFORE' \
+            '   extracting, or Windows marks every extracted file as untrusted.' \
+            '3. Double-click Run-Transcript-Viewer.bat' \
+            '4. Enter your username and press Enter.' \
             '' \
             'Keep program.exe, assets\ and Font\ together in the same folder.' \
             'The app reads them using relative paths and writes db_<user>.db here.' \
             '' \
             'No extra installation is needed - all runtime libraries are compiled in.' \
             '' \
-            'SmartScreen: the build is unsigned, so Windows may show' \
-            '"Windows protected your PC". Click More info -> Run anyway.' \
+            'SmartScreen / antivirus warnings' \
+            '--------------------------------' \
+            'This build is not code-signed (a certificate costs money), and it is' \
+            'a freshly-published file that Microsoft has never seen before. Those' \
+            'two facts alone are enough to trigger:' \
+            '' \
+            '  * "Windows protected your PC"  -> click More info -> Run anyway.' \
+            '  * A generic detection such as Trojan:Win32/Wacatac or Wacapew.' \
+            '    This is a false positive on an unsigned, statically-linked C' \
+            '    program. The full source is public; you can build it yourself.' \
+            '' \
+            'If a file is quarantined: Windows Security -> Virus & threat' \
+            'protection -> Protection history -> Restore. Please also report the' \
+            'false positive at https://www.microsoft.com/en-us/wdsi/filesubmission' \
+            'so the detection is corrected for everyone.' \
             > dist/$PKG/README-WINDOWS.txt
 
           cd dist && zip -r ../$PKG.zip $PKG/
@@ -228,13 +266,26 @@ jobs:
           body: |
             ## Transcript Viewer ${{ github.ref_name }}
 
-            ### Downloads
+            ### Install (recommended)
+
+            **Windows** — in PowerShell:
+            ```powershell
+            irm https://raw.githubusercontent.com/${{ github.repository }}/main/install.ps1 | iex
+            ```
+
+            **Linux** — in a terminal:
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | bash
+            ```
+
+            Both register a `ctt` command; Windows also gets a Start Menu entry.
+
+            ### Manual download
             | Platform | File |
             |---|---|
             | Linux (x86-64) | `transcript-viewer-linux.tar.gz` |
             | Windows (x86-64) | `transcript-viewer-windows.zip` |
 
-            ### Quick start
             1. Extract the archive to a writable folder (not straight from inside the .zip).
             2. Edit `assets/fonts.cfg` if you want a different font (Space Mono is bundled).
             3. Run `./program` (Linux) or double-click `Run-Transcript-Viewer.bat` (Windows).
@@ -242,9 +293,21 @@ jobs:
 
             Keep the binary next to `assets/` and `Font/` — they are loaded via relative paths.
 
-            > **Windows users:** the runtime is statically linked, so no DLLs or installers are
-            > needed. The build is unsigned, so SmartScreen may warn on first run —
-            > choose **More info → Run anyway**. See `README-WINDOWS.txt` in the zip.
+            > **Windows — about the antivirus warning.** This build is not code-signed, and
+            > every release is a brand-new file Microsoft has never seen, so SmartScreen may
+            > say *"Windows protected your PC"* and Defender may report a generic detection
+            > like `Trojan:Win32/Wacatac`. That is a **false positive** on an unsigned,
+            > statically-linked C program — the source is public and reproducible.
+            >
+            > The PowerShell installer above avoids the SmartScreen prompt entirely, because
+            > files fetched by `Invoke-WebRequest` are not tagged with the Mark-of-the-Web
+            > the way browser downloads are. If you download the `.zip` manually instead,
+            > right-click it → **Properties** → tick **Unblock** *before* extracting.
+            >
+            > If something gets quarantined, restore it from Windows Security → *Protection
+            > history*, and please report it at
+            > [Microsoft's submission portal](https://www.microsoft.com/en-us/wdsi/filesubmission)
+            > so the detection is fixed for everyone.
 
             See [README.md](https://github.com/${{ github.repository }}/blob/main/README.md) for full setup and usage instructions.
           files: |
